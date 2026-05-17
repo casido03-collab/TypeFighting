@@ -37,7 +37,7 @@ export type DuelInviteResponse = {
 };
 
 export type JoinDuelResponse = {
-  status: "joined" | "expired" | "not_found" | "full";
+  status: "waiting" | "joined" | "expired" | "not_found" | "full";
   battleId?: string;
   opponent?: {
     id: string;

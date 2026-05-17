@@ -382,6 +382,56 @@ async function joinDuelInvite(user, duelId, battleId) {
   };
 }
 
+async function getDuelInviteStatus(user, duelId) {
+  if (!hasDatabase()) return null;
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+
+  const inviteResult = await query(
+    `
+      select
+        d.duel_id,
+        d.creator_id,
+        d.guest_id,
+        d.battle_id,
+        d.status,
+        d.expires_at,
+        p.telegram_id as guest_telegram_id,
+        p.display_name as guest_name,
+        s.league as guest_league,
+        s.best_wpm as guest_wpm
+      from duel_invites d
+      left join players p on p.id = d.guest_id
+      left join player_stats s on s.player_id = d.guest_id
+      where d.duel_id = $1
+    `,
+    [duelId]
+  );
+
+  const invite = inviteResult.rows[0];
+  if (!invite) return { status: "not_found" };
+  if (invite.creator_id !== playerRow.id && invite.guest_id !== playerRow.id) return { status: "not_found" };
+  if (new Date(invite.expires_at).getTime() < Date.now() && invite.status !== "joined") {
+    await query("update duel_invites set status = 'expired', updated_at = now() where duel_id = $1", [duelId]);
+    return { status: "expired" };
+  }
+
+  if (invite.status !== "joined" || !invite.battle_id) {
+    return { status: invite.status || "waiting" };
+  }
+
+  return {
+    status: "joined",
+    battleId: invite.battle_id,
+    opponent: {
+      id: String(invite.guest_telegram_id || ""),
+      name: invite.guest_name || "PLAYER",
+      league: invite.guest_league || "Novice",
+      wpm: Number(invite.guest_wpm || 0),
+    },
+  };
+}
+
 async function recordBattleResult(user, result) {
   if (!hasDatabase()) return null;
   if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
@@ -573,6 +623,7 @@ async function getLeaderboard(period, user = null) {
 
 module.exports = {
   createDuelInvite,
+  getDuelInviteStatus,
   getLeaderboard,
   hasDatabase,
   initDb,

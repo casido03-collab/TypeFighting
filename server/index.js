@@ -4,6 +4,7 @@ const http = require("node:http");
 const path = require("node:path");
 const {
   createDuelInvite,
+  getDuelInviteStatus,
   getLeaderboard,
   hasDatabase,
   initDb,
@@ -323,6 +324,20 @@ const server = http.createServer(async (req, res) => {
       }
 
       sendJson(res, 200, joined || { status: "not_found" });
+      return;
+    }
+
+    if (req.method === "GET" && /^\/api\/duels\/[^/]+$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const duelId = decodeURIComponent(pathname.split("/")[3] || "");
+      const status = await getDuelInviteStatus(user, duelId);
+      if (status?.status === "joined" && status.battleId && !activeBattles.has(status.battleId)) {
+        createFriendBattle(status.battleId, user, status.opponent);
+      }
+
+      sendJson(res, 200, status || { status: "not_found" });
       return;
     }
 

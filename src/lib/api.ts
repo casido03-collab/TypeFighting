@@ -34,7 +34,7 @@ export class ApiError extends Error {
 }
 
 const BATTLE_STATUSES = new Set(["waiting", "active", "finished", "cancelled"]);
-const DUEL_JOIN_STATUSES = new Set(["joined", "expired", "not_found", "full"]);
+const DUEL_JOIN_STATUSES = new Set(["waiting", "joined", "expired", "not_found", "full"]);
 const MATCHMAKING_STATUSES = new Set(["matched", "queued", "unavailable"]);
 const LEADERBOARD_PERIODS = new Set(["today", "week"]);
 
@@ -287,6 +287,14 @@ export const api = {
         method: "POST",
       })
     );
+  },
+
+  async getDuelStatus(duelId: string): Promise<JoinDuelResponse | null> {
+    if (!canUseApi()) {
+      return null;
+    }
+
+    return assertJoinDuel(await request<unknown>(`/duels/${encodeURIComponent(duelId)}`));
   },
 
   async applyReferral(referralCode: string): Promise<ReferralResponse | null> {

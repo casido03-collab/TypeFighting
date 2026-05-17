@@ -39,6 +39,7 @@ export default function App() {
   const [searchMessage, setSearchMessage] = useState("");
   const [duelInviteOpen, setDuelInviteOpen] = useState(false);
   const [duelLink, setDuelLink] = useState("");
+  const [pendingDuelId, setPendingDuelId] = useState("");
   const [duelCopied, setDuelCopied] = useState(false);
   const [activeBattleId, setActiveBattleId] = useState<string | null>(null);
   const [player, setPlayer] = useState<PlayerProfile>(() => createPlayerProfile(telegram.user));
@@ -53,6 +54,7 @@ export default function App() {
   const searchTimer = useRef<number | null>(null);
   const messageTimer = useRef<number | null>(null);
   const duelCopiedTimer = useRef<number | null>(null);
+  const duelPollTimer = useRef<number | null>(null);
 
   useEffect(() => {
     const cleanupTelegram = telegram.init();
@@ -65,6 +67,7 @@ export default function App() {
       if (searchTimer.current) window.clearTimeout(searchTimer.current);
       if (messageTimer.current) window.clearTimeout(messageTimer.current);
       if (duelCopiedTimer.current) window.clearTimeout(duelCopiedTimer.current);
+      if (duelPollTimer.current) window.clearInterval(duelPollTimer.current);
     };
   }, []);
 
@@ -92,6 +95,18 @@ export default function App() {
       setScreen("menu");
     });
   }, [screen]);
+
+  useEffect(() => {
+    if (!pendingDuelId || !duelInviteOpen || !api.isConfigured) return;
+
+    duelPollTimer.current = window.setInterval(() => {
+      void pollDuelInvite(pendingDuelId);
+    }, 2200);
+
+    return () => {
+      if (duelPollTimer.current) window.clearInterval(duelPollTimer.current);
+    };
+  }, [duelInviteOpen, pendingDuelId]);
 
   function playFeedback() {
     if (settings.vibrationEnabled) {
@@ -343,6 +358,7 @@ export default function App() {
       const invite = await api.createDuelInvite();
 
       setDuelLink(buildStartAppLink(invite.startParam));
+      setPendingDuelId(invite.duelId);
       setDuelCopied(false);
       setDuelInviteOpen(true);
       if (api.isConfigured) setSyncStatus("synced");
@@ -350,6 +366,26 @@ export default function App() {
       setSyncStatus("offline");
       setSearchMessage("Не удалось создать дуэль. Проверьте подключение и попробуйте еще раз.");
       messageTimer.current = window.setTimeout(() => setSearchMessage(""), 2500);
+    }
+  }
+
+  async function pollDuelInvite(duelId: string) {
+    try {
+      const status = await api.getDuelStatus(duelId);
+      if (!status || status.status === "waiting") return;
+
+      if (status.status === "joined" && status.battleId) {
+        setSyncStatus("synced");
+        setPendingDuelId("");
+        startBattle("friend", status.battleId);
+        return;
+      }
+
+      setPendingDuelId("");
+      setDuelInviteOpen(false);
+      showSearchMessage(status.message || "Дуэль больше недоступна.", 2500);
+    } catch {
+      setSyncStatus("offline");
     }
   }
 
@@ -427,7 +463,10 @@ export default function App() {
             syncStatus={syncStatus}
             syncMessage={syncMessage}
             onCopyDuelLink={copyDuelLink}
-            onCloseDuelInvite={() => setDuelInviteOpen(false)}
+            onCloseDuelInvite={() => {
+              setPendingDuelId("");
+              setDuelInviteOpen(false);
+            }}
           />
         )}
 
