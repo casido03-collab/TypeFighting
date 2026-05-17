@@ -280,7 +280,7 @@ const server = http.createServer(async (req, res) => {
         accepted: true,
         player: storedState.player,
         energy: storedState.energy,
-        energySpent: 0,
+        energySpent: storedState.energySpent || 0,
       });
       return;
     }

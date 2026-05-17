@@ -3,6 +3,7 @@ const { Pool } = require("pg");
 const ENERGY_MAX = 50;
 const BATTLE_MODES = new Set(["ai", "online", "friend"]);
 const BATTLE_OUTCOMES = new Set(["win", "loss"]);
+const ENERGY_SPENDING_MODES = new Set(["online", "friend"]);
 
 let pool = null;
 let initPromise = null;
@@ -312,7 +313,36 @@ async function recordBattleResult(user, result) {
     [playerRow.id, result.mode, result.outcome, scoreDelta, combo, wordsCompleted, durationMs, wpm, finishedAt]
   );
 
-  return selectPlayerState(playerRow.id);
+  let energySpent = 0;
+  if (ENERGY_SPENDING_MODES.has(result.mode)) {
+    const energyResult = await query(
+      `
+        with previous as (
+          select value
+          from player_energy
+          where player_id = $1
+        ),
+        updated as (
+          update player_energy
+          set
+            value = greatest(value - 1, 0),
+            updated_at = now()
+          where player_id = $1
+          returning value
+        )
+        select greatest(previous.value - updated.value, 0)::integer as energy_spent
+        from previous, updated
+      `,
+      [playerRow.id]
+    );
+
+    energySpent = Number(energyResult.rows[0]?.energy_spent || 0);
+  }
+
+  return {
+    ...(await selectPlayerState(playerRow.id)),
+    energySpent,
+  };
 }
 
 function periodStartSql(period) {
