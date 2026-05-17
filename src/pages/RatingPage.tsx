@@ -1,22 +1,12 @@
 import { BottomNav } from "../components/BottomNav";
-import { HeroCharacter, TrophyAsset } from "../components/HeroCharacter";
 import { TopBar } from "../components/TopBar";
-import { PLAYER } from "../data/gameData";
+import type { LeaderboardEntry } from "../lib/apiContracts";
+import type { PlayerProfile } from "../lib/playerProfile";
 import { styles } from "../styles/styles";
 
-type Leader = {
-  rank: number;
-  name: string;
-  league: string;
-  wpm: number;
-  wins: string;
-  streak: number;
-  color: string;
-  me?: boolean;
-};
-
 type RatingPageProps = {
-  leaders: Leader[];
+  leaders: LeaderboardEntry[];
+  player: PlayerProfile;
   ratingPeriod: "week" | "today";
   onPeriodChange: (period: "week" | "today") => void;
   onHome: () => void;
@@ -25,61 +15,19 @@ type RatingPageProps = {
 
 export default function RatingPage({
   leaders,
+  player,
   ratingPeriod,
   onPeriodChange,
   onHome,
   onProfile,
 }: RatingPageProps) {
-  const progress = Math.min(1, PLAYER.score / PLAYER.nextScore);
+  const progress = Math.min(1, player.score / player.nextScore);
 
   return (
     <div style={styles.menuLayout}>
       <TopBar title="Рейтинг" />
 
       <section style={styles.pageScreen} aria-label="Рейтинг игроков">
-        <div style={styles.pageHeroCard}>
-          <div style={styles.homeProfileRow}>
-            <div>
-              <div style={styles.homeNickname}>{PLAYER.name}</div>
-              <div style={styles.homeLeague}>{PLAYER.league}</div>
-            </div>
-            <div style={styles.currencyBadge}>🏆 #{PLAYER.rank}</div>
-          </div>
-
-          <div style={styles.heroArenaPreview}>
-            <div style={styles.heroSun} />
-            <div style={styles.heroCloud} />
-            <div style={styles.heroMountainLeft} />
-            <div style={styles.heroMountainRight} />
-            <div style={styles.heroGrass} />
-            <div style={styles.heroCharacterWrap}>
-              <div style={styles.heroIdleFloat}>
-                <HeroCharacter />
-              </div>
-            </div>
-            <div
-              style={{
-                position: "absolute",
-                right: 24,
-                bottom: 20,
-                width: 88,
-                height: 102,
-                filter: "drop-shadow(0 8px 10px rgba(0,0,0,.22))",
-              }}
-            >
-              <TrophyAsset />
-            </div>
-          </div>
-
-          <div style={styles.profileInfoRow}>
-            <div>
-              <div style={styles.infoLabel}>ТВОЙ РАНГ</div>
-              <div style={styles.rankLine}>🛡️ {PLAYER.leagueCode}</div>
-            </div>
-            <div style={styles.scoreBadge}>🏆 {PLAYER.score}</div>
-          </div>
-        </div>
-
         <div style={styles.tabsCard}>
           <button
             style={{
@@ -107,10 +55,10 @@ export default function RatingPage({
           <div style={styles.progressTop}>
             <div>
               <div style={styles.cardLabel}>ДО СЛЕДУЮЩЕЙ ЛИГИ</div>
-              <div style={styles.progressTitle}>{PLAYER.nextLeague}</div>
+              <div style={styles.progressTitle}>{player.nextLeague}</div>
             </div>
             <div style={styles.progressScore}>
-              {PLAYER.score}/{PLAYER.nextScore}
+              {player.score}/{player.nextScore}
             </div>
           </div>
           <div style={styles.progressBar}>
@@ -121,15 +69,13 @@ export default function RatingPage({
               }}
             />
           </div>
-          <div style={styles.ratingNote}>
-            Рейтинг обновляется каждую неделю. Новый шанс для каждого!
-          </div>
+          <div style={styles.ratingNote}>Рейтинг обновляется каждую неделю. Новый шанс для каждого!</div>
         </div>
 
         <div style={styles.statsGrid}>
-          <StatCard icon="🎯" value={PLAYER.winRate} label="ПОБЕД" />
-          <StatCard icon="⌨️" value={PLAYER.wpm} label="WPM" />
-          <StatCard icon="🔥" value={PLAYER.streak} label="СЕРИЯ" />
+          <StatCard icon="🎯" value={player.winRate} label="ПОБЕД" />
+          <StatCard icon="⌨️" value={player.wpm} label="WPM" />
+          <StatCard icon="🔥" value={player.streak} label="СЕРИЯ" />
         </div>
 
         <div style={styles.tableCard}>
@@ -141,8 +87,8 @@ export default function RatingPage({
             <span>WIN</span>
           </div>
 
-          {leaders.map((player) => (
-            <RatingRow key={`${player.rank}-${player.name}`} player={player} />
+          {leaders.map((leader) => (
+            <RatingRow key={`${leader.rank}-${leader.name}`} player={leader} />
           ))}
         </div>
       </section>
@@ -152,15 +98,7 @@ export default function RatingPage({
   );
 }
 
-function StatCard({
-  icon,
-  value,
-  label,
-}: {
-  icon: string;
-  value: string | number;
-  label: string;
-}) {
+function StatCard({ icon, value, label }: { icon: string; value: string | number; label: string }) {
   return (
     <div style={styles.statCard}>
       <div style={styles.statIcon}>{icon}</div>
@@ -170,9 +108,8 @@ function StatCard({
   );
 }
 
-function RatingRow({ player }: { player: Leader }) {
-  const medal =
-    player.rank <= 3 ? ["🥇", "🥈", "🥉"][player.rank - 1] : player.rank;
+function RatingRow({ player }: { player: LeaderboardEntry }) {
+  const medal = player.rank <= 3 ? ["🥇", "🥈", "🥉"][player.rank - 1] : player.rank;
 
   return (
     <div style={{ ...styles.ratingRow, ...(player.me ? styles.ratingRowMe : {}) }}>

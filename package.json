@@ -2,7 +2,10 @@
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "check:fixtures": "node scripts/check-api-fixtures.cjs",
+    "mock:api": "node scripts/mock-api.cjs",
+    "smoke:mock-api": "node scripts/smoke-mock-api.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

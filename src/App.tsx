@@ -1,14 +1,35 @@
-import { useEffect, useRef, useState } from "react";
+﻿import { useEffect, useRef, useState } from "react";
 import MainMenuPage from "./pages/MainMenuPage";
 import BattlePage from "./pages/BattlePage";
 import RatingPage from "./pages/RatingPage";
 import ProfilePage from "./pages/ProfilePage";
 import { Background } from "./components/Background";
-import { LEADERS, MAX_HP, WORDS } from "./data/gameData";
+import { ENERGY_MAX, LEADERS, MAX_HP, WORDS } from "./data/gameData";
+import { api } from "./lib/api";
+import type { LeaderboardEntry } from "./lib/apiContracts";
+import { createPlayerProfile } from "./lib/playerProfile";
+import type { PlayerProfile } from "./lib/playerProfile";
+import {
+  getTodayKey,
+  clearPendingBattleResults,
+  loadEnergy,
+  loadPendingBattleResults,
+  loadSettings,
+  saveBattleResult,
+  saveEnergy,
+  savePendingBattleResult,
+  saveSettings,
+} from "./lib/progressStorage";
+import type { StoredBattleResult, StoredLanguage } from "./lib/progressStorage";
+import { telegram } from "./lib/telegram";
+import { buildStartAppLink } from "./lib/telegramLinks";
+import { parseStartAppParam } from "./lib/startApp";
 import { styles } from "./styles/styles";
 
 export type Screen = "menu" | "battle" | "rating" | "profile";
 export type BattleMode = "ai" | "online" | "friend";
+export type Language = StoredLanguage;
+type SyncStatus = "local" | "syncing" | "synced" | "offline";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("menu");
@@ -19,19 +40,213 @@ export default function App() {
   const [duelInviteOpen, setDuelInviteOpen] = useState(false);
   const [duelLink, setDuelLink] = useState("");
   const [duelCopied, setDuelCopied] = useState(false);
+  const [activeBattleId, setActiveBattleId] = useState<string | null>(null);
+  const [player, setPlayer] = useState<PlayerProfile>(() => createPlayerProfile(telegram.user));
+  const [leaders, setLeaders] = useState<LeaderboardEntry[]>(LEADERS);
+  const [energy, setEnergy] = useState(() => loadEnergy(ENERGY_MAX).value);
+  const [settings, setSettings] = useState(loadSettings);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
+    api.isConfigured ? "syncing" : "local"
+  );
 
   const searchTimer = useRef<number | null>(null);
   const messageTimer = useRef<number | null>(null);
+  const duelCopiedTimer = useRef<number | null>(null);
 
   useEffect(() => {
+    const cleanupTelegram = telegram.init();
+    setPlayer(createPlayerProfile(telegram.user));
+    void syncSession();
+    void handleStartAppParam(telegram.startParam);
+
     return () => {
+      cleanupTelegram();
       if (searchTimer.current) window.clearTimeout(searchTimer.current);
       if (messageTimer.current) window.clearTimeout(messageTimer.current);
+      if (duelCopiedTimer.current) window.clearTimeout(duelCopiedTimer.current);
     };
   }, []);
 
-  function startBattle(mode: BattleMode = "ai") {
+  useEffect(() => {
+    saveEnergy({ value: energy, date: getTodayKey() });
+  }, [energy]);
+
+  useEffect(() => {
+    saveSettings(settings);
+  }, [settings]);
+
+  useEffect(() => {
+    void loadLeaderboard(ratingPeriod);
+  }, [ratingPeriod]);
+
+  useEffect(() => {
+    if (screen === "menu") return;
+
+    return telegram.showBackButton(() => {
+      if (screen === "battle") {
+        returnToMenu();
+        return;
+      }
+
+      setScreen("menu");
+    });
+  }, [screen]);
+
+  function playFeedback() {
+    if (settings.vibrationEnabled) {
+      telegram.impact("light");
+    }
+
+    if (settings.vibrationEnabled && "vibrate" in navigator) {
+      navigator.vibrate(25);
+    }
+
+    if (!settings.soundEnabled) return;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    const context = new AudioContextClass();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+
+    oscillator.frequency.value = 660;
+    gain.gain.value = 0.035;
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.08);
+  }
+
+  async function syncSession() {
+    if (!api.isConfigured) {
+      setSyncStatus("local");
+      return;
+    }
+
+    setSyncStatus("syncing");
+
+    try {
+      const session = await api.syncSession();
+      if (!session) {
+        setSyncStatus("local");
+        return;
+      }
+
+      setPlayer(session.player);
+      setEnergy(session.energy.value);
+      if (session.settings) {
+        setSettings(session.settings);
+      }
+      setSyncStatus("synced");
+      void flushPendingBattleResults();
+      void loadLeaderboard(ratingPeriod);
+    } catch {
+      setSyncStatus("offline");
+    }
+  }
+
+  async function loadLeaderboard(period: "today" | "week") {
+    if (!api.isConfigured) {
+      setLeaders(LEADERS);
+      return;
+    }
+
+    try {
+      const leaderboard = await api.getLeaderboard(period);
+      if (!leaderboard) {
+        setLeaders(LEADERS);
+        return;
+      }
+
+      setLeaders(leaderboard.leaders);
+      setSyncStatus("synced");
+    } catch {
+      setLeaders(LEADERS);
+      setSyncStatus("offline");
+    }
+  }
+
+  async function flushPendingBattleResults() {
+    if (!api.isConfigured) return;
+
+    const pendingResults = loadPendingBattleResults();
+    if (pendingResults.length === 0) return;
+
+    try {
+      for (const result of pendingResults) {
+        await api.recordBattleResult(result);
+      }
+
+      clearPendingBattleResults();
+      setSyncStatus("synced");
+    } catch {
+      setSyncStatus("offline");
+    }
+  }
+
+  async function handleStartAppParam(startParam: string) {
+    const action = parseStartAppParam(startParam);
+
+    if (action.type === "none") return;
+
+    if (action.type === "unknown") {
+      showSearchMessage("Неизвестная ссылка запуска.", 2500);
+      return;
+    }
+
+    if (action.type === "referral") {
+      if (!api.isConfigured) {
+        showSearchMessage("Реферальная ссылка распознана. Начисление подключим на сервере.", 3000);
+        return;
+      }
+
+      try {
+        const referral = await api.applyReferral(action.referralCode);
+        showSearchMessage(referral?.message || "Реферальная ссылка принята.", 2500);
+        setSyncStatus("synced");
+      } catch {
+        setSyncStatus("offline");
+        showSearchMessage("Не удалось применить реферальную ссылку.", 2500);
+      }
+
+      return;
+    }
+
+    if (!api.isConfigured) {
+      setDuelLink(buildStartAppLink(action.duelId));
+      setDuelCopied(false);
+      setDuelInviteOpen(true);
+      showSearchMessage("Дуэльная ссылка распознана. Подключение к бою заработает с сервером.", 3000);
+      return;
+    }
+
+    try {
+      const duel = await api.joinDuel(action.duelId);
+
+      if (duel?.status === "joined") {
+        if (!duel.battleId) {
+          showSearchMessage("Сервер подключил дуэль, но не прислал бой. Попробуйте еще раз.", 2500);
+          return;
+        }
+
+        setSyncStatus("synced");
+        startBattle("friend", duel.battleId);
+        return;
+      }
+
+      setSyncStatus("synced");
+      showSearchMessage(duel?.message || "Дуэль недоступна.", 2500);
+    } catch {
+      setSyncStatus("offline");
+      showSearchMessage("Не удалось подключиться к дуэли.", 2500);
+    }
+  }
+
+  function startBattle(mode: BattleMode = "ai", battleId: string | null = null) {
+    telegram.impact("light");
     setBattleMode(mode);
+    setActiveBattleId(battleId);
     setIsSearching(false);
     setSearchMessage("");
     setDuelInviteOpen(false);
@@ -39,31 +254,93 @@ export default function App() {
     setScreen("battle");
   }
 
-  function findOpponent() {
-    if (isSearching) return;
+  function returnToMenu() {
+    telegram.impact("light");
+    setActiveBattleId(null);
+    setScreen("menu");
+  }
 
-    setSearchMessage("");
-    setIsSearching(true);
+  function showSearchMessage(message: string, timeoutMs = 2000) {
+    setSearchMessage(message);
+    messageTimer.current = window.setTimeout(() => setSearchMessage(""), timeoutMs);
+  }
 
+  function runLocalOpponentSearch() {
     searchTimer.current = window.setTimeout(() => {
-      const opponentFound = false;
-
-      if (opponentFound) {
-        startBattle("online");
-        return;
-      }
-
       setIsSearching(false);
-      setSearchMessage("Попробуйте еще раз!");
-      messageTimer.current = window.setTimeout(() => setSearchMessage(""), 2000);
+      showSearchMessage("Попробуйте еще раз!");
     }, 2000);
   }
 
-  function createFriendInvite() {
-    const duelId = `duel_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
-    setDuelLink(`https://t.me/typing_kombat_bot/app?startapp=${duelId}`);
-    setDuelCopied(false);
-    setDuelInviteOpen(true);
+  async function runServerOpponentSearch() {
+    try {
+      const result = await api.findOpponent();
+      setIsSearching(false);
+
+      if (!result || result.status === "unavailable") {
+        showSearchMessage(result?.message || "Попробуйте еще раз!");
+        return;
+      }
+
+      if (result.status === "queued") {
+        showSearchMessage("Соперник пока не найден. Попробуйте еще раз через пару секунд.", 2500);
+        setSyncStatus("synced");
+        return;
+      }
+
+      setSyncStatus("synced");
+      if (!result.battleId) {
+        showSearchMessage("Сервер нашел соперника, но не прислал бой. Попробуйте еще раз.", 2500);
+        return;
+      }
+
+      startBattle("online", result.battleId);
+    } catch {
+      setIsSearching(false);
+      setSyncStatus("offline");
+      showSearchMessage("Сервер поиска недоступен. Попробуйте еще раз.");
+    }
+  }
+
+  function findOpponent() {
+    if (isSearching) return;
+
+    if (messageTimer.current) {
+      window.clearTimeout(messageTimer.current);
+    }
+
+    if (energy <= 0) {
+      setSearchMessage("Энергия закончилась. Завтра снова будет 50, позже добавим восстановление за рекламу.");
+      telegram.notify("warning");
+      messageTimer.current = window.setTimeout(() => setSearchMessage(""), 3500);
+      return;
+    }
+
+    playFeedback();
+    setSearchMessage("");
+    setIsSearching(true);
+
+    if (!api.isConfigured) {
+      runLocalOpponentSearch();
+      return;
+    }
+
+    void runServerOpponentSearch();
+  }
+
+  async function createFriendInvite() {
+    try {
+      const invite = await api.createDuelInvite();
+
+      setDuelLink(buildStartAppLink(invite.startParam));
+      setDuelCopied(false);
+      setDuelInviteOpen(true);
+      if (api.isConfigured) setSyncStatus("synced");
+    } catch {
+      setSyncStatus("offline");
+      setSearchMessage("Не удалось создать дуэль. Проверьте подключение и попробуйте еще раз.");
+      messageTimer.current = window.setTimeout(() => setSearchMessage(""), 2500);
+    }
   }
 
   async function copyDuelLink() {
@@ -72,15 +349,52 @@ export default function App() {
     try {
       await navigator.clipboard.writeText(duelLink);
     } catch {
-      // В превью браузер может не дать доступ к clipboard.
+      // Preview browsers may block clipboard access.
     }
 
     setDuelCopied(true);
+    if (duelCopiedTimer.current) window.clearTimeout(duelCopiedTimer.current);
+    duelCopiedTimer.current = window.setTimeout(() => setDuelCopied(false), 2200);
+  }
+
+  function handleBattleComplete(result: StoredBattleResult) {
+    saveBattleResult(result);
+    void api
+      .recordBattleResult(result)
+      .then((response) => {
+        if (!response) return;
+        setPlayer(response.player);
+        setEnergy(response.energy.value);
+        setSyncStatus("synced");
+        void flushPendingBattleResults();
+      })
+      .catch(() => {
+        savePendingBattleResult(result);
+        setSyncStatus("offline");
+      });
+
+    setPlayer((currentPlayer) => {
+      const wins = currentPlayer.wins + (result.outcome === "win" ? 1 : 0);
+      const losses = currentPlayer.losses + (result.outcome === "loss" ? 1 : 0);
+      const totalBattles = Math.max(1, wins + losses);
+      const winRate = `${Math.round((wins / totalBattles) * 100)}%`;
+      const streak = result.outcome === "win" ? currentPlayer.streak + 1 : 0;
+      const bestCombo = Math.max(currentPlayer.bestCombo, result.combo);
+
+      return {
+        ...currentPlayer,
+        wins,
+        losses,
+        winRate,
+        streak,
+        bestCombo,
+      };
+    });
   }
 
   return (
-    <div style={styles.root}>
-      <section style={styles.phone} aria-label="Typing Kombat">
+    <div className="tk-root" style={styles.root}>
+      <section className="tk-phone" style={styles.phone} aria-label="Typing Kombat">
         <Background />
 
         {screen === "menu" && (
@@ -95,6 +409,10 @@ export default function App() {
             duelInviteOpen={duelInviteOpen}
             duelLink={duelLink}
             duelCopied={duelCopied}
+            player={player}
+            energy={energy}
+            maxEnergy={ENERGY_MAX}
+            syncStatus={syncStatus}
             onCopyDuelLink={copyDuelLink}
             onCloseDuelInvite={() => setDuelInviteOpen(false)}
           />
@@ -105,13 +423,16 @@ export default function App() {
             mode={battleMode}
             words={WORDS}
             maxHp={MAX_HP}
-            onMenu={() => setScreen("menu")}
+            battleId={activeBattleId}
+            onMenu={returnToMenu}
+            onBattleComplete={handleBattleComplete}
           />
         )}
 
         {screen === "rating" && (
           <RatingPage
-            leaders={LEADERS}
+            leaders={leaders}
+            player={player}
             ratingPeriod={ratingPeriod}
             onPeriodChange={setRatingPeriod}
             onHome={() => setScreen("menu")}
@@ -123,6 +444,32 @@ export default function App() {
           <ProfilePage
             onHome={() => setScreen("menu")}
             onRating={() => setScreen("rating")}
+            player={player}
+            soundEnabled={settings.soundEnabled}
+            vibrationEnabled={settings.vibrationEnabled}
+            language={settings.language}
+            onToggleSound={() =>
+              setSettings((currentSettings) => ({
+                ...currentSettings,
+                soundEnabled: !currentSettings.soundEnabled,
+              }))
+            }
+            onToggleVibration={() => {
+              setSettings((currentSettings) => ({
+                ...currentSettings,
+                vibrationEnabled: !currentSettings.vibrationEnabled,
+              }));
+              telegram.impact("medium");
+              if (!settings.vibrationEnabled && "vibrate" in navigator) {
+                navigator.vibrate(40);
+              }
+            }}
+            onToggleLanguage={() =>
+              setSettings((currentSettings) => ({
+                ...currentSettings,
+                language: currentSettings.language === "RU" ? "EN" : "RU",
+              }))
+            }
           />
         )}
       </section>

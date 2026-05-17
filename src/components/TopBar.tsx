@@ -16,8 +16,12 @@ export function TopBar({ title = "Typing Kombat", showEyebrow = false, showActio
 
       {showActions && (
         <div style={styles.topActions}>
-          <button style={styles.iconButton} type="button" aria-label="Звук">🔊</button>
-          <button style={styles.iconButton} type="button" aria-label="Настройки">⚙️</button>
+          <button style={styles.iconButton} type="button" aria-label="Звук">
+            🔊
+          </button>
+          <button style={styles.iconButton} type="button" aria-label="Настройки">
+            ⚙️
+          </button>
         </div>
       )}
     </header>

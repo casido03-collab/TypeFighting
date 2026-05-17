@@ -9,7 +9,7 @@ type BottomNavProps = {
 
 export function BottomNav({ active = "home", onHome, onRating, onProfile }: BottomNavProps) {
   return (
-    <nav style={styles.bottomNav} aria-label="Навигация">
+    <nav className="tk-bottom-nav" style={styles.bottomNav} aria-label="Навигация">
       <NavButton icon="🏠" text="Главная" active={active === "home"} onClick={onHome} />
       <NavButton icon="🏆" text="Рейтинг" active={active === "rating"} onClick={onRating} />
       <NavButton icon="👤" text="Профиль" active={active === "profile"} onClick={onProfile} />
@@ -29,7 +29,7 @@ function NavButton({
   onClick?: () => void;
 }) {
   return (
-    <button style={{ ...styles.navButton, ...(active ? styles.navButtonActive : {}) }} type="button" onClick={onClick}>
+    <button className="tk-nav-button" style={{ ...styles.navButton, ...(active ? styles.navButtonActive : {}) }} type="button" onClick={onClick}>
       <span style={styles.navIcon}>{icon}</span>
       {text}
     </button>
