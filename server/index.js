@@ -168,25 +168,30 @@ function pickServerWord(round = 0) {
 
 function createFriendBattle(battleId, user, opponent) {
   const word = pickServerWord(0);
+  const playerId = String(user.id);
+  const opponentId = opponent?.id || "friend";
   const state = {
     battleId,
     status: "active",
     maxHp: 120,
     round: 1,
     wordLength: word.length,
-    player: {
-      id: String(user.id),
-      name: displayNameFromUser(user),
-      hp: 120,
-      word,
-      typedCount: 0,
-    },
-    opponent: {
-      id: opponent?.id || "friend",
-      name: opponent?.name || "PLAYER",
-      hp: 120,
-      word,
-      typedCount: 0,
+    participantIds: [playerId, opponentId],
+    participants: {
+      [playerId]: {
+        id: playerId,
+        name: displayNameFromUser(user),
+        hp: 120,
+        word,
+        typedCount: 0,
+      },
+      [opponentId]: {
+        id: opponentId,
+        name: opponent?.name || "PLAYER",
+        hp: 120,
+        word,
+        typedCount: 0,
+      },
     },
     serverTime: new Date().toISOString(),
   };
@@ -195,10 +200,29 @@ function createFriendBattle(battleId, user, opponent) {
   return state;
 }
 
-function serializeBattleState(state) {
+function getBattleSides(state, user) {
+  const userId = String(user.id);
+  const playerId = state.participants[userId] ? userId : state.participantIds[0];
+  const opponentId = state.participantIds.find((id) => id !== playerId) || playerId;
+
   return {
-    ...state,
+    player: state.participants[playerId],
+    opponent: state.participants[opponentId],
+  };
+}
+
+function serializeBattleState(state, user) {
+  const sides = getBattleSides(state, user);
+  return {
+    battleId: state.battleId,
+    status: state.status,
+    maxHp: state.maxHp,
+    round: state.round,
+    wordLength: state.wordLength,
+    player: sides.player,
+    opponent: sides.opponent,
     serverTime: new Date().toISOString(),
+    winnerId: state.winnerId,
   };
 }
 
@@ -313,7 +337,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      sendJson(res, 200, serializeBattleState(state));
+      sendJson(res, 200, serializeBattleState(state, user));
       return;
     }
 
@@ -329,8 +353,9 @@ const server = http.createServer(async (req, res) => {
       }
 
       const body = JSON.parse((await readBody(req)) || "{}");
-      state.player.typedCount = Math.max(0, Math.min(state.player.word.length, Number(body.typedCount) || 0));
-      sendJson(res, 200, { accepted: true, state: serializeBattleState(state) });
+      const { player } = getBattleSides(state, user);
+      player.typedCount = Math.max(0, Math.min(player.word.length, Number(body.typedCount) || 0));
+      sendJson(res, 200, { accepted: true, state: serializeBattleState(state, user) });
       return;
     }
 
@@ -349,40 +374,41 @@ const server = http.createServer(async (req, res) => {
       if (state.status === "finished") {
         sendJson(res, 200, {
           accepted: false,
-          state: serializeBattleState(state),
+          state: serializeBattleState(state, user),
           outcome: "finished",
           rejectionReason: "battle_finished",
         });
         return;
       }
 
-      if (String(body.word || "").toLowerCase() !== state.player.word) {
+      const { player, opponent } = getBattleSides(state, user);
+      if (String(body.word || "").toLowerCase() !== player.word) {
         sendJson(res, 200, {
           accepted: false,
-          state: serializeBattleState(state),
+          state: serializeBattleState(state, user),
           outcome: "rejected",
           rejectionReason: "wrong_word",
         });
         return;
       }
 
-      state.opponent.hp = Math.max(0, state.opponent.hp - 15);
+      opponent.hp = Math.max(0, opponent.hp - 15);
       state.round += 1;
       const nextWord = pickServerWord(state.round);
-      state.player.word = nextWord;
-      state.opponent.word = nextWord;
+      for (const participant of Object.values(state.participants)) {
+        participant.word = nextWord;
+        participant.typedCount = 0;
+      }
       state.wordLength = nextWord.length;
-      state.player.typedCount = 0;
-      state.opponent.typedCount = 0;
 
-      if (state.opponent.hp <= 0) {
+      if (opponent.hp <= 0) {
         state.status = "finished";
         state.winnerId = String(user.id);
       }
 
       sendJson(res, 200, {
         accepted: true,
-        state: serializeBattleState(state),
+        state: serializeBattleState(state, user),
         damage: 15,
         outcome: state.status === "finished" ? "finished" : "hit",
         nextWord,

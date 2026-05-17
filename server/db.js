@@ -317,6 +317,7 @@ async function joinDuelInvite(user, duelId, battleId) {
         d.battle_id,
         d.status,
         d.expires_at,
+        p.telegram_id as creator_telegram_id,
         p.display_name as creator_name,
         s.league as creator_league,
         s.best_wpm as creator_wpm
@@ -340,7 +341,7 @@ async function joinDuelInvite(user, duelId, battleId) {
       status: "joined",
       battleId: invite.battle_id || battleId,
       opponent: {
-        id: String(invite.creator_id),
+        id: String(invite.creator_telegram_id),
         name: "Ожидаем друга",
         league: "Novice",
         wpm: 0,
@@ -373,7 +374,7 @@ async function joinDuelInvite(user, duelId, battleId) {
     status: "joined",
     battleId: nextBattleId,
     opponent: {
-      id: String(invite.creator_id),
+      id: String(invite.creator_telegram_id),
       name: invite.creator_name,
       league: invite.creator_league,
       wpm: Number(invite.creator_wpm || 0),
