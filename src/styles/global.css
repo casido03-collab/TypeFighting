@@ -50,10 +50,45 @@ input {
 }
 
 @media (pointer: coarse), (max-width: 560px), (max-height: 760px) {
+  html,
+  body,
+  #root {
+    height: var(--tk-app-height, 100dvh) !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+  }
+
+  .tk-root {
+    align-items: flex-start !important;
+    justify-content: center !important;
+    min-height: var(--tk-app-height, 100dvh) !important;
+    padding-top: max(2px, env(safe-area-inset-top)) !important;
+  }
+
+  .tk-phone {
+    height: calc(var(--tk-app-height, 100dvh) - max(4px, env(safe-area-inset-top)) - max(4px, env(safe-area-inset-bottom))) !important;
+    max-height: calc(var(--tk-app-height, 100dvh) - max(4px, env(safe-area-inset-top)) - max(4px, env(safe-area-inset-bottom))) !important;
+  }
+
   .tk-battle-layout {
     grid-template-rows: clamp(40px, 7vh, 54px) minmax(230px, 1fr) auto !important;
     gap: 7px !important;
     padding: 0 8px 8px !important;
+  }
+
+  .tk-battle-keyboard-open {
+    grid-template-rows: 0 minmax(220px, 1fr) auto !important;
+    gap: 6px !important;
+    padding-top: 0 !important;
+  }
+
+  .tk-battle-keyboard-open > header {
+    min-height: 0 !important;
+    height: 0 !important;
+    opacity: 0 !important;
+    overflow: hidden !important;
+    pointer-events: none !important;
+    padding: 0 !important;
   }
 
   .tk-keyboard-mock {
@@ -68,8 +103,12 @@ input {
 
 @media (max-height: 560px) {
   .tk-battle-layout {
-    grid-template-rows: 36px minmax(188px, 1fr) auto !important;
+    grid-template-rows: 34px minmax(178px, 1fr) auto !important;
     gap: 5px !important;
+  }
+
+  .tk-battle-keyboard-open {
+    grid-template-rows: 0 minmax(170px, 1fr) auto !important;
   }
 }
 

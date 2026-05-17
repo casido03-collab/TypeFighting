@@ -9,7 +9,7 @@ const buttonBase = {
 
 export const styles = {
   root: {
-    minHeight: "var(--tg-viewport-height, 100dvh)",
+    minHeight: "var(--tk-app-height, var(--tg-viewport-height, 100dvh))",
     width: "100%",
     display: "flex",
     alignItems: "center",

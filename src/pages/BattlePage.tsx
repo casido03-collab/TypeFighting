@@ -56,6 +56,7 @@ export default function BattlePage({
   const [serverBattle, setServerBattle] = useState<BattleStateResponse | null>(null);
   const [serverError, setServerError] = useState("");
   const [serverWordsCompleted, setServerWordsCompleted] = useState(0);
+  const [isTypingFocused, setIsTypingFocused] = useState(false);
 
   const resetTimer = useRef<number | null>(null);
   const aiTimer = useRef<number | null>(null);
@@ -124,7 +125,14 @@ export default function BattlePage({
   }, [action, playerHp, enemyHp]);
 
   useEffect(() => {
-    window.setTimeout(() => typingInputRef.current?.focus(), 60);
+    window.setTimeout(() => {
+      try {
+        typingInputRef.current?.focus({ preventScroll: true });
+      } catch {
+        typingInputRef.current?.focus();
+      }
+      window.scrollTo(0, 0);
+    }, 60);
   }, [action]);
 
   useEffect(() => {
@@ -598,7 +606,10 @@ export default function BattlePage({
   }
 
   return (
-    <div className="tk-battle-layout" style={styles.battleLayout}>
+    <div
+      className={`tk-battle-layout${isTypingFocused ? " tk-battle-keyboard-open" : ""}`}
+      style={styles.battleLayout}
+    >
       <BattleHeader onMenu={handleMenu} combo={combo} mode={mode} />
 
       <BattleArena
@@ -629,6 +640,8 @@ export default function BattlePage({
         gameOver={gameOver}
         onType={handleTyping}
         inputRef={typingInputRef}
+        onFocus={() => setIsTypingFocused(true)}
+        onBlur={() => setIsTypingFocused(false)}
       />
 
       <KeyboardMock />
@@ -829,6 +842,8 @@ function TypingDock({
   gameOver,
   onType,
   inputRef,
+  onFocus,
+  onBlur,
 }: {
   currentWord: string;
   typed: string;
@@ -836,6 +851,8 @@ function TypingDock({
   gameOver: boolean;
   onType: (value: string) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  onFocus: () => void;
+  onBlur: () => void;
 }) {
   const disabled = gameOver || ["playerFall", "enemyFall", "playerAttack", "enemyAttack"].includes(action);
 
@@ -847,10 +864,14 @@ function TypingDock({
         style={{ ...styles.realInput, ...(action === "wrong" ? styles.realInputWrong : {}) }}
         value={typed}
         onChange={(event) => onType(event.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
         placeholder="печатай..."
         disabled={disabled}
         autoCapitalize="none"
         autoComplete="off"
+        inputMode="text"
+        enterKeyHint="done"
         spellCheck={false}
       />
     </section>
