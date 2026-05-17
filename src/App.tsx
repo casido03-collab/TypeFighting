@@ -5,7 +5,7 @@ import RatingPage from "./pages/RatingPage";
 import ProfilePage from "./pages/ProfilePage";
 import { Background } from "./components/Background";
 import { ENERGY_MAX, LEADERS, MAX_HP, WORDS } from "./data/gameData";
-import { api } from "./lib/api";
+import { ApiError, api } from "./lib/api";
 import type { LeaderboardEntry } from "./lib/apiContracts";
 import { createPlayerProfile } from "./lib/playerProfile";
 import type { PlayerProfile } from "./lib/playerProfile";
@@ -48,6 +48,7 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     api.isConfigured ? "syncing" : "local"
   );
+  const [syncMessage, setSyncMessage] = useState("");
 
   const searchTimer = useRef<number | null>(null);
   const messageTimer = useRef<number | null>(null);
@@ -141,8 +142,13 @@ export default function App() {
       setSyncStatus("synced");
       void flushPendingBattleResults();
       void loadLeaderboard(ratingPeriod);
-    } catch {
+    } catch (error) {
       setSyncStatus("offline");
+      setSyncMessage(
+        error instanceof ApiError
+          ? `API ${error.status}: ${error.code}`
+          : "API connection failed"
+      );
     }
   }
 
@@ -413,6 +419,7 @@ export default function App() {
             energy={energy}
             maxEnergy={ENERGY_MAX}
             syncStatus={syncStatus}
+            syncMessage={syncMessage}
             onCopyDuelLink={copyDuelLink}
             onCloseDuelInvite={() => setDuelInviteOpen(false)}
           />

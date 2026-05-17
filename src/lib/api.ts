@@ -22,6 +22,17 @@ type ApiRequestOptions = {
   keepalive?: boolean;
 };
 
+export class ApiError extends Error {
+  status: number;
+  code: string;
+
+  constructor(status: number, code: string) {
+    super(`API request failed: ${status} ${code}`);
+    this.status = status;
+    this.code = code;
+  }
+}
+
 const BATTLE_STATUSES = new Set(["waiting", "active", "finished", "cancelled"]);
 const DUEL_JOIN_STATUSES = new Set(["joined", "expired", "not_found", "full"]);
 const MATCHMAKING_STATUSES = new Set(["matched", "queued", "unavailable"]);
@@ -236,7 +247,18 @@ async function request<T>(path: string, options: ApiRequestOptions = {}): Promis
   }
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    let code = "request_failed";
+
+    try {
+      const errorBody = (await response.json()) as unknown;
+      if (isRecord(errorBody) && typeof errorBody.error === "string") {
+        code = errorBody.error;
+      }
+    } catch {
+      code = response.statusText || code;
+    }
+
+    throw new ApiError(response.status, code);
   }
 
   return response.json() as Promise<T>;

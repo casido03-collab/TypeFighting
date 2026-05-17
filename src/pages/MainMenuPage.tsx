@@ -20,6 +20,7 @@ type MainMenuPageProps = {
   energy: number;
   maxEnergy: number;
   syncStatus: "local" | "syncing" | "synced" | "offline";
+  syncMessage: string;
   onCopyDuelLink: () => void;
   onCloseDuelInvite: () => void;
 };
@@ -39,6 +40,7 @@ export default function MainMenuPage({
   energy,
   maxEnergy,
   syncStatus,
+  syncMessage,
   onCopyDuelLink,
   onCloseDuelInvite,
 }: MainMenuPageProps) {
@@ -81,6 +83,7 @@ export default function MainMenuPage({
                     ...styles.syncBadge,
                     ...(syncStatus === "offline" ? styles.syncBadgeOffline : {}),
                   }}
+                  title={syncMessage || undefined}
                 >
                   {syncStatus === "syncing" ? "SYNC" : syncStatus === "offline" ? "OFF" : "ON"}
                 </div>
@@ -125,6 +128,9 @@ export default function MainMenuPage({
         </div>
 
         {searchMessage && <div style={styles.searchMessage}>{searchMessage}</div>}
+        {syncStatus === "offline" && syncMessage && (
+          <div style={styles.searchMessage}>{syncMessage}</div>
+        )}
 
         {energyInfoOpen && (
           <div style={styles.energyInfoBanner}>
