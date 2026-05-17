@@ -12,10 +12,11 @@ const telegramBotUsername = normalizeBotUsername(
 const telegramAppShortName = normalizeTelegramAppShortName(
   import.meta.env.VITE_TELEGRAM_APP_SHORT_NAME || "app"
 );
+const defaultApiBaseUrl = import.meta.env.PROD ? "/api" : "";
 
 export const appConfig = {
   telegramBotUsername: telegramBotUsername || "typing_kombat_bot",
   telegramAppShortName: telegramAppShortName || "app",
-  apiBaseUrl: (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, ""),
+  apiBaseUrl: (import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl).replace(/\/$/, ""),
   allowBrowserApiMock: import.meta.env.VITE_ALLOW_BROWSER_API_MOCK === "true",
 };
