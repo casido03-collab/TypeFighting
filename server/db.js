@@ -79,6 +79,7 @@ async function initDb() {
       create table if not exists battle_results (
         id uuid primary key default gen_random_uuid(),
         player_id uuid not null references players(id) on delete cascade,
+        result_id text not null,
         mode text not null,
         outcome text not null,
         score_delta integer not null default 0,
@@ -95,6 +96,10 @@ async function initDb() {
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
     await query("create index if not exists idx_battle_results_created_at on battle_results(created_at desc)");
+    await query("alter table battle_results add column if not exists result_id text");
+    await query("update battle_results set result_id = id::text where result_id is null");
+    await query("alter table battle_results alter column result_id set not null");
+    await query("create unique index if not exists idx_battle_results_player_result on battle_results(player_id, result_id)");
 
     return true;
   })();
@@ -271,6 +276,11 @@ async function recordBattleResult(user, result) {
   const playerRow = await ensureTelegramPlayer(user);
   if (!playerRow) return null;
 
+  const resultId =
+    typeof result.resultId === "string" && result.resultId.trim()
+      ? result.resultId.trim().slice(0, 120)
+      : `${result.mode}:${result.outcome}:${result.finishedAt}:${result.durationMs}:${result.combo}`;
+
   const isWin = result.outcome === "win";
   const combo = clampInteger(result.combo, 0, 1000);
   const wordsCompleted = clampInteger(result.wordsCompleted, 0, 1000);
@@ -278,6 +288,35 @@ async function recordBattleResult(user, result) {
   const wpm = estimateWpm(result);
   const scoreDelta = scoreDeltaFor(result);
   const finishedAt = Number.isNaN(Date.parse(result.finishedAt)) ? new Date() : new Date(result.finishedAt);
+
+  const insertedResult = await query(
+    `
+      insert into battle_results (
+        player_id,
+        result_id,
+        mode,
+        outcome,
+        score_delta,
+        combo,
+        words_completed,
+        duration_ms,
+        wpm,
+        finished_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      on conflict (player_id, result_id) do nothing
+      returning id
+    `,
+    [playerRow.id, resultId, result.mode, result.outcome, scoreDelta, combo, wordsCompleted, durationMs, wpm, finishedAt]
+  );
+
+  if (insertedResult.rows.length === 0) {
+    return {
+      ...(await selectPlayerState(playerRow.id)),
+      energySpent: 0,
+      duplicate: true,
+    };
+  }
 
   await query(
     `
@@ -293,24 +332,6 @@ async function recordBattleResult(user, result) {
       where player_id = $1
     `,
     [playerRow.id, scoreDelta, isWin ? 1 : 0, isWin ? 0 : 1, combo, wpm]
-  );
-
-  await query(
-    `
-      insert into battle_results (
-        player_id,
-        mode,
-        outcome,
-        score_delta,
-        combo,
-        words_completed,
-        duration_ms,
-        wpm,
-        finished_at
-      )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `,
-    [playerRow.id, result.mode, result.outcome, scoreDelta, combo, wordsCompleted, durationMs, wpm, finishedAt]
   );
 
   let energySpent = 0;

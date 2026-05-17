@@ -36,6 +36,14 @@ const AI_HIT_COOLDOWN_MS = 420;
 const BATTLE_POLL_MS = 900;
 const TYPING_PROGRESS_MS = 120;
 
+function createBattleResultId() {
+  if (window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `result_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function BattlePage({
   mode = "ai",
   words,
@@ -140,6 +148,7 @@ export default function BattlePage({
 
     resultReported.current = true;
     onBattleComplete?.({
+      resultId: createBattleResultId(),
       mode,
       outcome: serverFinished ? (serverPlayerWon ? "win" : "loss") : enemyHp <= 0 ? "win" : "loss",
       combo,

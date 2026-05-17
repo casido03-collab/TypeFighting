@@ -14,6 +14,7 @@ export type StoredEnergy = {
 export type BattleOutcome = "win" | "loss";
 
 export type StoredBattleResult = {
+  resultId: string;
   mode: "ai" | "online" | "friend";
   outcome: BattleOutcome;
   combo: number;
@@ -86,6 +87,7 @@ function isBattleResult(value: unknown): value is StoredBattleResult {
 
   return (
     (result.mode === "ai" || result.mode === "online" || result.mode === "friend") &&
+    typeof result.resultId === "string" &&
     (result.outcome === "win" || result.outcome === "loss") &&
     typeof result.combo === "number" &&
     typeof result.playerHp === "number" &&
