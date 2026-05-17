@@ -735,7 +735,7 @@ function BattleArena({
     action === "enemyAttack" ? styles.stickmanEnemyAttack : action === "enemyFall" ? styles.stickmanEnemyFall : {};
 
   return (
-    <section style={{ ...styles.battleCard, ...(action !== "idle" ? styles.battleShake : {}) }}>
+    <section style={styles.battleCard}>
       <ArenaBackground />
 
       <div style={styles.hudRow}>
