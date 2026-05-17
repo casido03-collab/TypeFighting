@@ -26,6 +26,7 @@ jobs:
             set -e
             cd /var/www/typefight
             git fetch origin main
+            rm -rf server
             git reset --hard origin/main
             npm install
             npm run build
