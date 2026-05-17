@@ -538,6 +538,14 @@ export default function BattlePage({
     if (gameOver) return;
 
     const clean = value.trim().toLowerCase();
+
+    if (actionRef.current !== "idle") {
+      if (clean !== typed) {
+        setTyped(typed);
+      }
+      return;
+    }
+
     setTyped(clean);
 
     if (!currentWord.startsWith(clean)) {
