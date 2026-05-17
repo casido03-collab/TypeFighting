@@ -159,7 +159,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, {
         ok: true,
         service: "typefight-api",
-        runtime: "vps",
+        runtime: "vps-auto",
         timestamp: new Date().toISOString(),
       });
       return;
