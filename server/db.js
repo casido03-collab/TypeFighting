@@ -92,6 +92,19 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists duel_invites (
+        duel_id text primary key,
+        creator_id uuid not null references players(id) on delete cascade,
+        guest_id uuid references players(id) on delete set null,
+        battle_id text,
+        status text not null default 'waiting',
+        expires_at timestamptz not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
@@ -100,6 +113,8 @@ async function initDb() {
     await query("update battle_results set result_id = id::text where result_id is null");
     await query("alter table battle_results alter column result_id set not null");
     await query("create unique index if not exists idx_battle_results_player_result on battle_results(player_id, result_id)");
+    await query("create index if not exists idx_duel_invites_expires_at on duel_invites(expires_at)");
+    await query("create index if not exists idx_duel_invites_battle_id on duel_invites(battle_id)");
 
     return true;
   })();
@@ -265,6 +280,105 @@ async function upsertTelegramPlayer(user) {
   const playerRow = await ensureTelegramPlayer(user);
   if (!playerRow) return null;
   return selectPlayerState(playerRow.id);
+}
+
+async function createDuelInvite(user, duelId, expiresAt) {
+  if (!hasDatabase()) return null;
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+
+  await query(
+    `
+      insert into duel_invites (duel_id, creator_id, expires_at)
+      values ($1, $2, $3)
+      on conflict (duel_id) do nothing
+    `,
+    [duelId, playerRow.id, expiresAt]
+  );
+
+  return {
+    duelId,
+    startParam: duelId,
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+async function joinDuelInvite(user, duelId, battleId) {
+  if (!hasDatabase()) return null;
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+
+  const inviteResult = await query(
+    `
+      select
+        d.duel_id,
+        d.creator_id,
+        d.guest_id,
+        d.battle_id,
+        d.status,
+        d.expires_at,
+        p.display_name as creator_name,
+        s.league as creator_league,
+        s.best_wpm as creator_wpm
+      from duel_invites d
+      join players p on p.id = d.creator_id
+      join player_stats s on s.player_id = d.creator_id
+      where d.duel_id = $1
+    `,
+    [duelId]
+  );
+
+  const invite = inviteResult.rows[0];
+  if (!invite) return { status: "not_found" };
+  if (new Date(invite.expires_at).getTime() < Date.now()) {
+    await query("update duel_invites set status = 'expired', updated_at = now() where duel_id = $1", [duelId]);
+    return { status: "expired" };
+  }
+
+  if (invite.creator_id === playerRow.id) {
+    return {
+      status: "joined",
+      battleId: invite.battle_id || battleId,
+      opponent: {
+        id: String(invite.creator_id),
+        name: "Ожидаем друга",
+        league: "Novice",
+        wpm: 0,
+      },
+    };
+  }
+
+  if (invite.status === "joined" && invite.guest_id && invite.guest_id !== playerRow.id) {
+    return { status: "full" };
+  }
+
+  const nextBattleId = invite.battle_id || battleId;
+  const joinedResult = await query(
+    `
+      update duel_invites
+      set
+        guest_id = $2,
+        battle_id = $3,
+        status = 'joined',
+        updated_at = now()
+      where duel_id = $1
+      returning *
+    `,
+    [duelId, playerRow.id, nextBattleId]
+  );
+
+  if (joinedResult.rows.length === 0) return { status: "not_found" };
+
+  return {
+    status: "joined",
+    battleId: nextBattleId,
+    opponent: {
+      id: String(invite.creator_id),
+      name: invite.creator_name,
+      league: invite.creator_league,
+      wpm: Number(invite.creator_wpm || 0),
+    },
+  };
 }
 
 async function recordBattleResult(user, result) {
@@ -457,9 +571,11 @@ async function getLeaderboard(period, user = null) {
 }
 
 module.exports = {
+  createDuelInvite,
   getLeaderboard,
   hasDatabase,
   initDb,
+  joinDuelInvite,
   recordBattleResult,
   upsertTelegramPlayer,
 };

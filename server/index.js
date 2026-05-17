@@ -3,9 +3,11 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const {
+  createDuelInvite,
   getLeaderboard,
   hasDatabase,
   initDb,
+  joinDuelInvite,
   recordBattleResult,
   upsertTelegramPlayer,
 } = require("./db");
@@ -39,6 +41,8 @@ const LEADERS = [
   { rank: 5, name: "TYPERX", league: "PLATINUM", wpm: 334, wins: "87%", streak: 5, color: "#22d3ee" },
   { rank: 999, name: "YOU", league: "NOVICE", wpm: 0, wins: "0%", streak: 0, color: "#fde047", me: true },
 ];
+const SERVER_WORDS = ["арена", "рывок", "пламя", "фокус", "мечта", "удар", "щит", "раунд", "искра", "темп"];
+const activeBattles = new Map();
 
 function sendJson(res, status, body) {
   res.writeHead(status, {
@@ -150,6 +154,54 @@ function createDuelId() {
   return `duel_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
 
+function createBattleId() {
+  return `battle_${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+}
+
+function displayNameFromUser(user) {
+  return user?.username || [user?.first_name, user?.last_name].filter(Boolean).join(" ") || "Player";
+}
+
+function pickServerWord(round = 0) {
+  return SERVER_WORDS[Math.abs(round) % SERVER_WORDS.length];
+}
+
+function createFriendBattle(battleId, user, opponent) {
+  const word = pickServerWord(0);
+  const state = {
+    battleId,
+    status: "active",
+    maxHp: 120,
+    round: 1,
+    wordLength: word.length,
+    player: {
+      id: String(user.id),
+      name: displayNameFromUser(user),
+      hp: 120,
+      word,
+      typedCount: 0,
+    },
+    opponent: {
+      id: opponent?.id || "friend",
+      name: opponent?.name || "PLAYER",
+      hp: 120,
+      word,
+      typedCount: 0,
+    },
+    serverTime: new Date().toISOString(),
+  };
+
+  activeBattles.set(battleId, state);
+  return state;
+}
+
+function serializeBattleState(state) {
+  return {
+    ...state,
+    serverTime: new Date().toISOString(),
+  };
+}
+
 function getTelegramUser(req, res) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
@@ -226,20 +278,127 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/api/duels") {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
       const duelId = createDuelId();
-      sendJson(res, 200, {
-        duelId,
-        startParam: duelId,
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-      });
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      const dbInvite = await createDuelInvite(user, duelId, expiresAt);
+      sendJson(res, 200, dbInvite || { duelId, startParam: duelId, expiresAt: expiresAt.toISOString() });
       return;
     }
 
     if (req.method === "POST" && /^\/api\/duels\/[^/]+\/join$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const duelId = decodeURIComponent(pathname.split("/")[3] || "");
+      const joined = await joinDuelInvite(user, duelId, createBattleId());
+      if (joined?.status === "joined" && joined.battleId && !activeBattles.has(joined.battleId)) {
+        createFriendBattle(joined.battleId, user, joined.opponent);
+      }
+
+      sendJson(res, 200, joined || { status: "not_found" });
+      return;
+    }
+
+    if (req.method === "GET" && /^\/api\/battles\/[^/]+$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const battleId = decodeURIComponent(pathname.split("/")[3] || "");
+      const state = activeBattles.get(battleId);
+      if (!state) {
+        sendJson(res, 404, { error: "battle_not_found" });
+        return;
+      }
+
+      sendJson(res, 200, serializeBattleState(state));
+      return;
+    }
+
+    if (req.method === "POST" && /^\/api\/battles\/[^/]+\/typing$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const battleId = decodeURIComponent(pathname.split("/")[3] || "");
+      const state = activeBattles.get(battleId);
+      if (!state) {
+        sendJson(res, 404, { error: "battle_not_found" });
+        return;
+      }
+
+      const body = JSON.parse((await readBody(req)) || "{}");
+      state.player.typedCount = Math.max(0, Math.min(state.player.word.length, Number(body.typedCount) || 0));
+      sendJson(res, 200, { accepted: true, state: serializeBattleState(state) });
+      return;
+    }
+
+    if (req.method === "POST" && /^\/api\/battles\/[^/]+\/words$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const battleId = decodeURIComponent(pathname.split("/")[3] || "");
+      const state = activeBattles.get(battleId);
+      if (!state) {
+        sendJson(res, 404, { error: "battle_not_found" });
+        return;
+      }
+
+      const body = JSON.parse((await readBody(req)) || "{}");
+      if (state.status === "finished") {
+        sendJson(res, 200, {
+          accepted: false,
+          state: serializeBattleState(state),
+          outcome: "finished",
+          rejectionReason: "battle_finished",
+        });
+        return;
+      }
+
+      if (String(body.word || "").toLowerCase() !== state.player.word) {
+        sendJson(res, 200, {
+          accepted: false,
+          state: serializeBattleState(state),
+          outcome: "rejected",
+          rejectionReason: "wrong_word",
+        });
+        return;
+      }
+
+      state.opponent.hp = Math.max(0, state.opponent.hp - 15);
+      state.round += 1;
+      const nextWord = pickServerWord(state.round);
+      state.player.word = nextWord;
+      state.opponent.word = nextWord;
+      state.wordLength = nextWord.length;
+      state.player.typedCount = 0;
+      state.opponent.typedCount = 0;
+
+      if (state.opponent.hp <= 0) {
+        state.status = "finished";
+        state.winnerId = String(user.id);
+      }
+
       sendJson(res, 200, {
-        status: "expired",
-        message: "Дуэльная ссылка распознана. Реальное подключение второго игрока включим после базы.",
+        accepted: true,
+        state: serializeBattleState(state),
+        damage: 15,
+        outcome: state.status === "finished" ? "finished" : "hit",
+        nextWord,
       });
+      return;
+    }
+
+    if (req.method === "POST" && /^\/api\/battles\/[^/]+\/leave$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const battleId = decodeURIComponent(pathname.split("/")[3] || "");
+      const state = activeBattles.get(battleId);
+      if (state) state.status = "cancelled";
+
+      sendJson(res, 200, { accepted: true });
       return;
     }
 
