@@ -99,6 +99,12 @@ input {
     padding: 8px 10px !important;
     border-radius: 16px !important;
   }
+
+  .tk-typing-dock input {
+    font-size: 16px !important;
+    min-height: 40px !important;
+    touch-action: manipulation;
+  }
 }
 
 @media (max-height: 560px) {

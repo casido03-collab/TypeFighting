@@ -125,6 +125,10 @@ export default function BattlePage({
   }, [action, playerHp, enemyHp]);
 
   useEffect(() => {
+    if (window.matchMedia("(pointer: coarse)").matches) {
+      return;
+    }
+
     window.setTimeout(() => {
       try {
         typingInputRef.current?.focus({ preventScroll: true });
@@ -870,6 +874,7 @@ function TypingDock({
         disabled={disabled}
         autoCapitalize="none"
         autoComplete="off"
+        autoCorrect="off"
         inputMode="text"
         enterKeyHint="done"
         spellCheck={false}
