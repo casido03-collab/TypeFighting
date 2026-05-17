@@ -168,6 +168,18 @@ async function upsertTelegramPlayer(user) {
   await query("insert into player_energy (player_id) values ($1) on conflict (player_id) do nothing", [
     playerRow.id,
   ]);
+  await query(
+    `
+      update player_energy
+      set
+        value = $2,
+        refill_date = current_date,
+        updated_at = now()
+      where player_id = $1
+        and refill_date < current_date
+    `,
+    [playerRow.id, ENERGY_MAX]
+  );
 
   const stateResult = await query(
     `
