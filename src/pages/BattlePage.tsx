@@ -860,17 +860,27 @@ function TypingDock({
 }) {
   const disabled = gameOver || ["playerFall", "enemyFall", "playerAttack", "enemyAttack"].includes(action);
 
+  function focusInput() {
+    if (disabled) return;
+
+    try {
+      inputRef.current?.focus({ preventScroll: true });
+    } catch {
+      inputRef.current?.focus();
+    }
+  }
+
   return (
-    <section className="tk-typing-dock" style={styles.typingDock}>
+    <section className="tk-typing-dock" style={styles.typingDock} onClick={focusInput}>
       <div style={styles.typingWord}>{currentWord}</div>
       <input
         ref={inputRef}
-        style={{ ...styles.realInput, ...(action === "wrong" ? styles.realInputWrong : {}) }}
+        className="tk-native-input-proxy"
+        style={styles.nativeInputProxy}
         value={typed}
         onChange={(event) => onType(event.target.value)}
         onFocus={onFocus}
         onBlur={onBlur}
-        placeholder="печатай..."
         disabled={disabled}
         autoCapitalize="none"
         autoComplete="off"
@@ -879,6 +889,15 @@ function TypingDock({
         enterKeyHint="done"
         spellCheck={false}
       />
+      <button
+        className="tk-visible-typebox"
+        style={{ ...styles.realInput, ...(action === "wrong" ? styles.realInputWrong : {}) }}
+        type="button"
+        disabled={disabled}
+        onClick={focusInput}
+      >
+        {typed || "печатай..."}
+      </button>
     </section>
   );
 }
