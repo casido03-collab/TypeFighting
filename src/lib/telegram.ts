@@ -32,6 +32,8 @@ type TelegramWebApp = {
   ready: () => void;
   expand: () => void;
   close: () => void;
+  openLink?: (url: string) => void;
+  openTelegramLink?: (url: string) => void;
   onEvent: (eventType: string, callback: () => void) => void;
   offEvent: (eventType: string, callback: () => void) => void;
   BackButton?: {
