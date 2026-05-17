@@ -125,10 +125,6 @@ export default function BattlePage({
   }, [action, playerHp, enemyHp]);
 
   useEffect(() => {
-    if (window.matchMedia("(pointer: coarse)").matches) {
-      return;
-    }
-
     window.setTimeout(() => {
       try {
         typingInputRef.current?.focus({ preventScroll: true });
@@ -858,7 +854,7 @@ function TypingDock({
   onFocus: () => void;
   onBlur: () => void;
 }) {
-  const disabled = gameOver || ["playerFall", "enemyFall", "playerAttack", "enemyAttack"].includes(action);
+  const disabled = gameOver;
 
   function focusInput() {
     if (disabled) return;
@@ -886,7 +882,7 @@ function TypingDock({
         autoComplete="off"
         autoCorrect="off"
         inputMode="text"
-        enterKeyHint="done"
+        enterKeyHint="go"
         spellCheck={false}
       />
       <button
