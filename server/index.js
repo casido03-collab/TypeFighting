@@ -167,6 +167,14 @@ function getTelegramUser(req, res) {
   return user;
 }
 
+function getOptionalTelegramUser(req) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  const initData = req.headers["x-telegram-init-data"] || "";
+  if (!botToken || !initData) return null;
+
+  return verifyTelegramInitData(String(initData), botToken);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -203,7 +211,7 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && pathname === "/api/leaderboard") {
       const period = url.searchParams.get("period") === "today" ? "today" : "week";
-      const dbLeaderboard = await getLeaderboard(period);
+      const dbLeaderboard = await getLeaderboard(period, getOptionalTelegramUser(req));
       if (dbLeaderboard) {
         sendJson(res, 200, dbLeaderboard);
         return;

@@ -166,6 +166,10 @@ export default function App() {
       }
 
       setLeaders(leaderboard.leaders);
+      setPlayer((currentPlayer) => ({
+        ...currentPlayer,
+        rank: leaderboard.playerRank,
+      }));
       setSyncStatus("synced");
     } catch {
       setLeaders(LEADERS);

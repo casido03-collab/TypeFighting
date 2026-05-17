@@ -74,8 +74,26 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists battle_results (
+        id uuid primary key default gen_random_uuid(),
+        player_id uuid not null references players(id) on delete cascade,
+        mode text not null,
+        outcome text not null,
+        score_delta integer not null default 0,
+        combo integer not null default 0 check (combo >= 0),
+        words_completed integer not null default 0 check (words_completed >= 0),
+        duration_ms integer not null default 0 check (duration_ms >= 0),
+        wpm integer not null default 0 check (wpm >= 0),
+        finished_at timestamptz not null default now(),
+        created_at timestamptz not null default now()
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
+    await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
+    await query("create index if not exists idx_battle_results_created_at on battle_results(created_at desc)");
 
     return true;
   })();
@@ -254,8 +272,11 @@ async function recordBattleResult(user, result) {
 
   const isWin = result.outcome === "win";
   const combo = clampInteger(result.combo, 0, 1000);
+  const wordsCompleted = clampInteger(result.wordsCompleted, 0, 1000);
+  const durationMs = clampInteger(result.durationMs, 1000, 60 * 60 * 1000);
   const wpm = estimateWpm(result);
   const scoreDelta = scoreDeltaFor(result);
+  const finishedAt = Number.isNaN(Date.parse(result.finishedAt)) ? new Date() : new Date(result.finishedAt);
 
   await query(
     `
@@ -273,28 +294,95 @@ async function recordBattleResult(user, result) {
     [playerRow.id, scoreDelta, isWin ? 1 : 0, isWin ? 0 : 1, combo, wpm]
   );
 
+  await query(
+    `
+      insert into battle_results (
+        player_id,
+        mode,
+        outcome,
+        score_delta,
+        combo,
+        words_completed,
+        duration_ms,
+        wpm,
+        finished_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `,
+    [playerRow.id, result.mode, result.outcome, scoreDelta, combo, wordsCompleted, durationMs, wpm, finishedAt]
+  );
+
   return selectPlayerState(playerRow.id);
 }
 
-async function getLeaderboard(period) {
+function periodStartSql(period) {
+  return period === "today" ? "date_trunc('day', now())" : "date_trunc('week', now())";
+}
+
+async function getLeaderboard(period, user = null) {
   if (!hasDatabase()) return null;
   await initDb();
 
+  const currentPlayerRow = user ? await ensureTelegramPlayer(user) : null;
+  const periodStart = periodStartSql(period);
+
   const result = await query(`
-    select
-      p.display_name,
-      s.league,
-      s.best_wpm,
-      s.wins,
-      s.losses,
-      s.current_streak,
-      s.score,
-      row_number() over (order by s.score desc, s.best_wpm desc, p.created_at asc) as rank
-    from players p
-    join player_stats s on s.player_id = p.id
-    order by s.score desc, s.best_wpm desc, p.created_at asc
+    with leaderboard as (
+      select
+        p.id,
+        p.display_name,
+        s.league,
+        coalesce(sum(br.score_delta), 0)::integer as score,
+        coalesce(max(br.wpm), 0)::integer as best_wpm,
+        coalesce(sum(case when br.outcome = 'win' then 1 else 0 end), 0)::integer as wins,
+        coalesce(sum(case when br.outcome = 'loss' then 1 else 0 end), 0)::integer as losses,
+        s.current_streak,
+        p.created_at
+      from players p
+      join player_stats s on s.player_id = p.id
+      left join battle_results br on br.player_id = p.id and br.created_at >= ${periodStart}
+      group by p.id, p.display_name, s.league, s.current_streak, p.created_at
+    ),
+    ranked as (
+      select
+        *,
+        row_number() over (order by score desc, best_wpm desc, created_at asc) as rank
+      from leaderboard
+    )
+    select *
+    from ranked
+    where score > 0
+    order by rank asc
     limit 20
   `);
+
+  let playerRank = 999;
+  if (currentPlayerRow) {
+    const rankResult = await query(`
+      with leaderboard as (
+        select
+          p.id,
+          coalesce(sum(br.score_delta), 0)::integer as score,
+          coalesce(max(br.wpm), 0)::integer as best_wpm,
+          p.created_at
+        from players p
+        join player_stats s on s.player_id = p.id
+        left join battle_results br on br.player_id = p.id and br.created_at >= ${periodStart}
+        group by p.id, p.created_at
+      ),
+      ranked as (
+        select
+          id,
+          row_number() over (order by score desc, best_wpm desc, created_at asc) as rank
+        from leaderboard
+      )
+      select rank
+      from ranked
+      where id = $1
+    `, [currentPlayerRow.id]);
+
+    playerRank = Number(rankResult.rows[0]?.rank || 999);
+  }
 
   return {
     period,
@@ -310,9 +398,10 @@ async function getLeaderboard(period) {
         wins: total > 0 ? `${Math.round((wins / total) * 100)}%` : "0%",
         streak: Number(row.current_streak || 0),
         color: "#fde047",
+        me: currentPlayerRow ? row.id === currentPlayerRow.id : false,
       };
     }),
-    playerRank: 999,
+    playerRank,
   };
 }
 
