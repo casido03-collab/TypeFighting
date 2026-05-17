@@ -68,9 +68,12 @@ function setViewportVars() {
   const webApp = getWebApp();
   const viewportHeight = webApp?.viewportHeight || window.innerHeight;
   const stableHeight = webApp?.viewportStableHeight || viewportHeight;
+  const visualHeight = window.visualViewport?.height || viewportHeight;
+  const appHeight = Math.min(viewportHeight, visualHeight);
 
   document.documentElement.style.setProperty("--tg-viewport-height", `${viewportHeight}px`);
   document.documentElement.style.setProperty("--tg-viewport-stable-height", `${stableHeight}px`);
+  document.documentElement.style.setProperty("--tk-app-height", `${appHeight}px`);
 }
 
 function setThemeVars() {
@@ -114,17 +117,23 @@ export const telegram = {
 
     if (!webApp) {
       window.addEventListener("resize", setViewportVars);
-      return () => window.removeEventListener("resize", setViewportVars);
+      window.visualViewport?.addEventListener("resize", setViewportVars);
+      return () => {
+        window.removeEventListener("resize", setViewportVars);
+        window.visualViewport?.removeEventListener("resize", setViewportVars);
+      };
     }
 
     webApp.ready();
     webApp.expand();
     webApp.onEvent("viewportChanged", setViewportVars);
     webApp.onEvent("themeChanged", setThemeVars);
+    window.visualViewport?.addEventListener("resize", setViewportVars);
 
     return () => {
       webApp.offEvent("viewportChanged", setViewportVars);
       webApp.offEvent("themeChanged", setThemeVars);
+      window.visualViewport?.removeEventListener("resize", setViewportVars);
     };
   },
 

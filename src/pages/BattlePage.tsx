@@ -598,7 +598,7 @@ export default function BattlePage({
   }
 
   return (
-    <div style={styles.battleLayout}>
+    <div className="tk-battle-layout" style={styles.battleLayout}>
       <BattleHeader onMenu={handleMenu} combo={combo} mode={mode} />
 
       <BattleArena
@@ -840,7 +840,7 @@ function TypingDock({
   const disabled = gameOver || ["playerFall", "enemyFall", "playerAttack", "enemyAttack"].includes(action);
 
   return (
-    <section style={styles.typingDock}>
+    <section className="tk-typing-dock" style={styles.typingDock}>
       <div style={styles.typingWord}>{currentWord}</div>
       <input
         ref={inputRef}
@@ -862,7 +862,7 @@ function KeyboardMock() {
   const rowTwo = ["ф", "ы", "в", "а", "п", "р", "о", "л"];
 
   return (
-    <div style={styles.keyboardMock}>
+    <div className="tk-keyboard-mock" style={styles.keyboardMock}>
       <div style={styles.keyboardHandle} />
       <div style={styles.keyboardText}>место под клавиатуру телефона</div>
       <div style={styles.keyboardRows}>

@@ -22,7 +22,7 @@ export const styles = {
   phone: {
     position: "relative",
     width: "min(100%, 430px)",
-    height: "min(860px, calc(var(--tg-viewport-stable-height, 100dvh) - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))))",
+    height: "min(860px, calc(var(--tk-app-height, var(--tg-viewport-height, 100dvh)) - max(8px, env(safe-area-inset-top)) - max(8px, env(safe-area-inset-bottom))))",
     minHeight: 0,
     overflow: "hidden",
     borderRadius: "clamp(22px, 6vw, 36px)",

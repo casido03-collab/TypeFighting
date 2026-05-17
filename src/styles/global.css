@@ -49,6 +49,30 @@ input {
   overflow-wrap: anywhere;
 }
 
+@media (pointer: coarse), (max-width: 560px), (max-height: 760px) {
+  .tk-battle-layout {
+    grid-template-rows: clamp(40px, 7vh, 54px) minmax(230px, 1fr) auto !important;
+    gap: 7px !important;
+    padding: 0 8px 8px !important;
+  }
+
+  .tk-keyboard-mock {
+    display: none !important;
+  }
+
+  .tk-typing-dock {
+    padding: 8px 10px !important;
+    border-radius: 16px !important;
+  }
+}
+
+@media (max-height: 560px) {
+  .tk-battle-layout {
+    grid-template-rows: 36px minmax(188px, 1fr) auto !important;
+    gap: 5px !important;
+  }
+}
+
 @media (max-height: 620px), (max-width: 360px) {
   .tk-root {
     padding: max(2px, env(safe-area-inset-top)) max(2px, env(safe-area-inset-right)) max(2px, env(safe-area-inset-bottom)) max(2px, env(safe-area-inset-left)) !important;
