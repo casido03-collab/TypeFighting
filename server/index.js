@@ -2,7 +2,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
-const { getLeaderboard, hasDatabase, initDb, upsertTelegramPlayer } = require("./db");
+const {
+  getLeaderboard,
+  hasDatabase,
+  initDb,
+  recordBattleResult,
+  upsertTelegramPlayer,
+} = require("./db");
 
 const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
@@ -247,11 +253,25 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/api/battles") {
-      await readBody(req);
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const body = JSON.parse((await readBody(req)) || "{}");
+      const storedState = await recordBattleResult(user, body);
+      if (!storedState) {
+        sendJson(res, 200, {
+          accepted: true,
+          player: createPlayer(user),
+          energy: createEnergy(),
+          energySpent: 0,
+        });
+        return;
+      }
+
       sendJson(res, 200, {
         accepted: true,
-        player: createPlayer(null),
-        energy: createEnergy(),
+        player: storedState.player,
+        energy: storedState.energy,
         energySpent: 0,
       });
       return;

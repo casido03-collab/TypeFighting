@@ -366,21 +366,20 @@ export default function App() {
   function handleBattleComplete(result: StoredBattleResult) {
     saveBattleResult(result);
 
-    if (result.mode !== "ai") {
-      void api
-        .recordBattleResult(result)
-        .then((response) => {
-          if (!response) return;
-          setPlayer(response.player);
-          setEnergy(response.energy.value);
-          setSyncStatus("synced");
-          void flushPendingBattleResults();
-        })
-        .catch(() => {
-          savePendingBattleResult(result);
-          setSyncStatus("offline");
-        });
-    }
+    void api
+      .recordBattleResult(result)
+      .then((response) => {
+        if (!response) return;
+        setPlayer(response.player);
+        setEnergy(response.energy.value);
+        setSyncStatus("synced");
+        void flushPendingBattleResults();
+        void loadLeaderboard(ratingPeriod);
+      })
+      .catch(() => {
+        savePendingBattleResult(result);
+        setSyncStatus("offline");
+      });
 
     setPlayer((currentPlayer) => {
       const wins = currentPlayer.wins + (result.outcome === "win" ? 1 : 0);

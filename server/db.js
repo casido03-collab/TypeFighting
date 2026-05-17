@@ -1,6 +1,8 @@
 const { Pool } = require("pg");
 
 const ENERGY_MAX = 50;
+const BATTLE_MODES = new Set(["ai", "online", "friend"]);
+const BATTLE_OUTCOMES = new Set(["win", "loss"]);
 
 let pool = null;
 let initPromise = null;
@@ -120,7 +122,58 @@ function mapEnergy(row) {
   };
 }
 
-async function upsertTelegramPlayer(user) {
+function clampInteger(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return min;
+  return Math.min(max, Math.max(min, Math.round(number)));
+}
+
+function estimateWpm(result) {
+  const wordsCompleted = clampInteger(result.wordsCompleted, 0, 1000);
+  const durationMs = clampInteger(result.durationMs, 1000, 60 * 60 * 1000);
+  return Math.min(500, Math.round(wordsCompleted / (durationMs / 60000)));
+}
+
+function scoreDeltaFor(result) {
+  const comboBonus = Math.min(15, Math.floor(clampInteger(result.combo, 0, 1000) / 3));
+  if (result.outcome === "win") {
+    return (result.mode === "ai" ? 10 : 25) + comboBonus;
+  }
+  return result.mode === "ai" ? 2 : 5;
+}
+
+async function selectPlayerState(playerId) {
+  const stateResult = await query(
+    `
+      select
+        p.display_name,
+        s.league,
+        s.league_code,
+        s.score,
+        s.wins,
+        s.losses,
+        s.best_combo,
+        s.best_wpm,
+        s.current_streak,
+        s.invited_count,
+        e.value,
+        e.refill_date
+      from players p
+      join player_stats s on s.player_id = p.id
+      join player_energy e on e.player_id = p.id
+      where p.id = $1
+    `,
+    [playerId]
+  );
+
+  const row = stateResult.rows[0];
+  return {
+    player: mapPlayer(row),
+    energy: mapEnergy(row),
+  };
+}
+
+async function ensureTelegramPlayer(user) {
   if (!hasDatabase()) return null;
   await initDb();
 
@@ -181,34 +234,46 @@ async function upsertTelegramPlayer(user) {
     [playerRow.id, ENERGY_MAX]
   );
 
-  const stateResult = await query(
+  return playerRow;
+}
+
+async function upsertTelegramPlayer(user) {
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+  return selectPlayerState(playerRow.id);
+}
+
+async function recordBattleResult(user, result) {
+  if (!hasDatabase()) return null;
+  if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
+    throw new Error("invalid_battle_result");
+  }
+
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+
+  const isWin = result.outcome === "win";
+  const combo = clampInteger(result.combo, 0, 1000);
+  const wpm = estimateWpm(result);
+  const scoreDelta = scoreDeltaFor(result);
+
+  await query(
     `
-      select
-        p.display_name,
-        s.league,
-        s.league_code,
-        s.score,
-        s.wins,
-        s.losses,
-        s.best_combo,
-        s.best_wpm,
-        s.current_streak,
-        s.invited_count,
-        e.value,
-        e.refill_date
-      from players p
-      join player_stats s on s.player_id = p.id
-      join player_energy e on e.player_id = p.id
-      where p.id = $1
+      update player_stats
+      set
+        score = score + $2,
+        wins = wins + $3,
+        losses = losses + $4,
+        best_combo = greatest(best_combo, $5),
+        best_wpm = greatest(best_wpm, $6),
+        current_streak = case when $3 = 1 then current_streak + 1 else 0 end,
+        updated_at = now()
+      where player_id = $1
     `,
-    [playerRow.id]
+    [playerRow.id, scoreDelta, isWin ? 1 : 0, isWin ? 0 : 1, combo, wpm]
   );
 
-  const row = stateResult.rows[0];
-  return {
-    player: mapPlayer(row),
-    energy: mapEnergy(row),
-  };
+  return selectPlayerState(playerRow.id);
 }
 
 async function getLeaderboard(period) {
@@ -255,5 +320,6 @@ module.exports = {
   getLeaderboard,
   hasDatabase,
   initDb,
+  recordBattleResult,
   upsertTelegramPlayer,
 };
