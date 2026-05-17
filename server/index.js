@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const { getLeaderboard, hasDatabase, initDb, upsertTelegramPlayer } = require("./db");
 
 const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
@@ -129,6 +130,16 @@ function createSession(user) {
   };
 }
 
+async function getPlayerSession(user) {
+  const storedState = await upsertTelegramPlayer(user);
+  if (!storedState) return createSession(user);
+
+  return {
+    ...storedState,
+    serverTime: new Date().toISOString(),
+  };
+}
+
 function createDuelId() {
   return `duel_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 }
@@ -160,6 +171,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         service: "typefight-api",
         runtime: "vps-auto",
+        database: hasDatabase() ? "configured" : "not_configured",
         timestamp: new Date().toISOString(),
       });
       return;
@@ -168,22 +180,29 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/telegram/session") {
       const user = getTelegramUser(req, res);
       if (!user) return;
-      sendJson(res, 200, createSession(user));
+      sendJson(res, 200, await getPlayerSession(user));
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/player") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      const session = await getPlayerSession(user);
       sendJson(res, 200, {
-        player: createPlayer(user),
-        energy: createEnergy(),
+        player: session.player,
+        energy: session.energy,
       });
       return;
     }
 
     if (req.method === "GET" && pathname === "/api/leaderboard") {
       const period = url.searchParams.get("period") === "today" ? "today" : "week";
+      const dbLeaderboard = await getLeaderboard(period);
+      if (dbLeaderboard) {
+        sendJson(res, 200, dbLeaderboard);
+        return;
+      }
+
       sendJson(res, 200, {
         period,
         leaders: LEADERS,
@@ -244,6 +263,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
-});
+initDb()
+  .catch((error) => {
+    console.error("Database init failed:", error);
+  })
+  .finally(() => {
+    server.listen(PORT, "127.0.0.1", () => {
+      console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
+    });
+  });
