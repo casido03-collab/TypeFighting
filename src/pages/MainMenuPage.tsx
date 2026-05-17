@@ -49,7 +49,7 @@ export default function MainMenuPage({
   async function shareDuelLink() {
     if (!duelLink) return;
 
-    const shareText = "Присоединяйся к дуэли в Typing Kombat";
+    const shareText = "Присоединяйся к дуэли в Type Fight";
     const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(duelLink)}&text=${encodeURIComponent(shareText)}`;
 
     if (window.Telegram?.WebApp?.openTelegramLink) {
@@ -65,8 +65,8 @@ export default function MainMenuPage({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: "Typing Kombat",
-          text: "Присоединяйся к дуэли в Typing Kombat",
+          title: "Type Fight",
+          text: "Присоединяйся к дуэли в Type Fight",
           url: duelLink,
         });
       } catch {

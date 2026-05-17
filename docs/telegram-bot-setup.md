@@ -1,6 +1,6 @@
 # Telegram Bot Setup
 
-This checklist prepares Typing Kombat for a real Telegram Mini App launch.
+This checklist prepares Type Fight for a real Telegram Mini App launch.
 
 ## 1. Create Bot
 
@@ -13,7 +13,7 @@ In BotFather:
 Suggested commands:
 
 ```txt
-start - Open Typing Kombat
+start - Open Type Fight
 play - Find an opponent
 profile - View profile
 ```

@@ -1,4 +1,4 @@
--- Typing Kombat backend database schema draft.
+-- Type Fight backend database schema draft.
 -- Target: PostgreSQL. Keep server state authoritative for Telegram identity,
 -- PvP battles, rating, energy, referrals, and duel invites.
 

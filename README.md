@@ -1,4 +1,4 @@
-# Typing Kombat
+# Type Fight
 
 React/Vite prototype for a Telegram Mini App typing fighting game.
 

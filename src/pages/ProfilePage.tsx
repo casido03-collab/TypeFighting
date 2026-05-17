@@ -57,8 +57,8 @@ export default function ProfilePage({
     if (navigator.share) {
       try {
         await navigator.share({
-          title: "Typing Kombat",
-          text: "Заходи в Typing Kombat по моей ссылке",
+          title: "Type Fight",
+          text: "Заходи в Type Fight по моей ссылке",
           url: refLink,
         });
       } catch {

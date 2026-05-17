@@ -403,7 +403,7 @@ export default function App() {
 
   return (
     <div className="tk-root" style={styles.root}>
-      <section className="tk-phone" style={styles.phone} aria-label="Typing Kombat">
+      <section className="tk-phone" style={styles.phone} aria-label="Type Fight">
         <Background />
 
         {screen === "menu" && (

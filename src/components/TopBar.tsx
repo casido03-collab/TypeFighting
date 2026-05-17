@@ -6,7 +6,7 @@ type TopBarProps = {
   showActions?: boolean;
 };
 
-export function TopBar({ title = "Typing Kombat", showEyebrow = false, showActions = false }: TopBarProps) {
+export function TopBar({ title = "Type Fight", showEyebrow = false, showActions = false }: TopBarProps) {
   return (
     <header style={styles.topbar}>
       <div>
