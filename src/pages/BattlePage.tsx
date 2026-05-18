@@ -64,7 +64,7 @@ export default function BattlePage({
   const [serverBattle, setServerBattle] = useState<BattleStateResponse | null>(null);
   const [serverError, setServerError] = useState("");
   const [serverWordsCompleted, setServerWordsCompleted] = useState(0);
-  const [isTypingFocused, setIsTypingFocused] = useState(false);
+  const [isTypingFocused, setIsTypingFocused] = useState(true);
 
   const resetTimer = useRef<number | null>(null);
   const aiTimer = useRef<number | null>(null);
@@ -90,6 +90,7 @@ export default function BattlePage({
   const isServerBattleRef = useRef(false);
   const gameOverRef = useRef(false);
   const lastServerWordRef = useRef("");
+  const leavingBattleRef = useRef(false);
 
   const isServerBattle = Boolean(battleId && mode !== "ai");
   const currentWord = serverBattle?.player.word || getPlayerWord(words, playerWordIndex);
@@ -132,16 +133,21 @@ export default function BattlePage({
     enemyHpRef.current = enemyHp;
   }, [action, playerHp, enemyHp]);
 
-  useEffect(() => {
+  function focusTypingInput(delay = 60) {
     window.setTimeout(() => {
+      if (leavingBattleRef.current || gameOverRef.current) return;
+
       try {
         typingInputRef.current?.focus({ preventScroll: true });
       } catch {
         typingInputRef.current?.focus();
       }
-      window.scrollTo(0, 0);
-    }, 60);
-  }, [action]);
+    }, delay);
+  }
+
+  useEffect(() => {
+    focusTypingInput(80);
+  }, []);
 
   useEffect(() => {
     if (!gameOver || resultReported.current) return;
@@ -289,6 +295,7 @@ export default function BattlePage({
   }
 
   function handleMenu() {
+    leavingBattleRef.current = true;
     reportBattleLeave();
     onMenu();
   }
@@ -663,7 +670,11 @@ export default function BattlePage({
         onType={handleTyping}
         inputRef={typingInputRef}
         onFocus={() => setIsTypingFocused(true)}
-        onBlur={() => setIsTypingFocused(false)}
+        onBlur={() => {
+          if (leavingBattleRef.current || gameOverRef.current) return;
+          setIsTypingFocused(true);
+          focusTypingInput(80);
+        }}
       />
 
       <KeyboardMock />
