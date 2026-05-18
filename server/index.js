@@ -372,15 +372,23 @@ async function sendTelegramMessage(chatId, text) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) return;
 
-  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true,
+      }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -420,13 +428,18 @@ const server = http.createServer(async (req, res) => {
 
       if (text.startsWith("/stats") && chatId) {
         if (!isAdminTelegramId(fromId)) {
-          await sendTelegramMessage(chatId, "Нет доступа к статистике.");
+          void sendTelegramMessage(chatId, "Нет доступа к статистике.").catch((error) => {
+            console.error("Failed to send Telegram access denied message:", error);
+          });
           sendJson(res, 200, { ok: true });
           return;
         }
 
         const stats = await getAdminStats();
-        await sendTelegramMessage(chatId, stats ? formatAdminStats(stats) : "База статистики недоступна.");
+        const textMessage = stats ? formatAdminStats(stats) : "База статистики недоступна.";
+        void sendTelegramMessage(chatId, textMessage).catch((error) => {
+          console.error("Failed to send Telegram stats message:", error);
+        });
       }
 
       sendJson(res, 200, { ok: true });
