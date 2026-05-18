@@ -4,12 +4,14 @@ const http = require("node:http");
 const path = require("node:path");
 const {
   createDuelInvite,
+  getActiveBattle,
   getDuelInviteStatus,
   getLeaderboard,
   hasDatabase,
   initDb,
   joinDuelInvite,
   recordBattleResult,
+  saveActiveBattle,
   upsertTelegramPlayer,
 } = require("./db");
 
@@ -199,7 +201,26 @@ function createFriendBattle(battleId, user, opponent) {
   };
 
   activeBattles.set(battleId, state);
+  void saveActiveBattle(state).catch((error) => {
+    console.error("Failed to save active battle:", error);
+  });
   return state;
+}
+
+async function getBattleState(battleId) {
+  const memoryState = activeBattles.get(battleId);
+  if (memoryState) return memoryState;
+
+  const storedState = await getActiveBattle(battleId);
+  if (!storedState) return null;
+
+  activeBattles.set(battleId, storedState);
+  return storedState;
+}
+
+async function persistBattleState(state) {
+  activeBattles.set(state.battleId, state);
+  await saveActiveBattle(state);
 }
 
 function getBattleSides(state, user) {
@@ -347,7 +368,7 @@ const server = http.createServer(async (req, res) => {
       if (!user) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
-      const state = activeBattles.get(battleId);
+      const state = await getBattleState(battleId);
       if (!state) {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
@@ -362,7 +383,7 @@ const server = http.createServer(async (req, res) => {
       if (!user) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
-      const state = activeBattles.get(battleId);
+      const state = await getBattleState(battleId);
       if (!state) {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
@@ -371,6 +392,7 @@ const server = http.createServer(async (req, res) => {
       const body = JSON.parse((await readBody(req)) || "{}");
       const { player } = getBattleSides(state, user);
       player.typedCount = Math.max(0, Math.min(player.word.length, Number(body.typedCount) || 0));
+      await persistBattleState(state);
       sendJson(res, 200, { accepted: true, state: serializeBattleState(state, user) });
       return;
     }
@@ -380,7 +402,7 @@ const server = http.createServer(async (req, res) => {
       if (!user) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
-      const state = activeBattles.get(battleId);
+      const state = await getBattleState(battleId);
       if (!state) {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
@@ -433,6 +455,7 @@ const server = http.createServer(async (req, res) => {
         state.winnerId = String(user.id);
       }
 
+      await persistBattleState(state);
       sendJson(res, 200, {
         accepted: true,
         state: serializeBattleState(state, user),
@@ -448,8 +471,11 @@ const server = http.createServer(async (req, res) => {
       if (!user) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
-      const state = activeBattles.get(battleId);
-      if (state) state.status = "cancelled";
+      const state = await getBattleState(battleId);
+      if (state) {
+        state.status = "cancelled";
+        await persistBattleState(state);
+      }
 
       sendJson(res, 200, { accepted: true });
       return;

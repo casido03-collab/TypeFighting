@@ -105,6 +105,17 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists active_battles (
+        battle_id text primary key,
+        mode text not null default 'friend',
+        status text not null default 'active',
+        state jsonb not null,
+        created_at timestamptz not null default now(),
+        updated_at timestamptz not null default now()
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
@@ -115,6 +126,7 @@ async function initDb() {
     await query("create unique index if not exists idx_battle_results_player_result on battle_results(player_id, result_id)");
     await query("create index if not exists idx_duel_invites_expires_at on duel_invites(expires_at)");
     await query("create index if not exists idx_duel_invites_battle_id on duel_invites(battle_id)");
+    await query("create index if not exists idx_active_battles_status on active_battles(status)");
 
     return true;
   })();
@@ -432,6 +444,37 @@ async function getDuelInviteStatus(user, duelId) {
   };
 }
 
+async function saveActiveBattle(state) {
+  if (!hasDatabase() || !state?.battleId) return null;
+  await initDb();
+
+  await query(
+    `
+      insert into active_battles (battle_id, mode, status, state)
+      values ($1, $2, $3, $4::jsonb)
+      on conflict (battle_id) do update set
+        status = excluded.status,
+        state = excluded.state,
+        updated_at = now()
+    `,
+    [state.battleId, state.mode || "friend", state.status || "active", JSON.stringify(state)]
+  );
+
+  return state;
+}
+
+async function getActiveBattle(battleId) {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const result = await query(
+    "select state from active_battles where battle_id = $1 limit 1",
+    [battleId]
+  );
+
+  return result.rows[0]?.state || null;
+}
+
 async function recordBattleResult(user, result) {
   if (!hasDatabase()) return null;
   if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
@@ -623,11 +666,13 @@ async function getLeaderboard(period, user = null) {
 
 module.exports = {
   createDuelInvite,
+  getActiveBattle,
   getDuelInviteStatus,
   getLeaderboard,
   hasDatabase,
   initDb,
   joinDuelInvite,
   recordBattleResult,
+  saveActiveBattle,
   upsertTelegramPlayer,
 };
