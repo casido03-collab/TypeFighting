@@ -143,6 +143,20 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists system_events (
+        id uuid primary key default gen_random_uuid(),
+        level text not null default 'error',
+        event_name text not null,
+        status_code integer,
+        method text,
+        path text,
+        message text,
+        metadata jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now()
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
@@ -161,6 +175,8 @@ async function initDb() {
     );
     await query("create index if not exists idx_player_referrals_inviter on player_referrals(inviter_id)");
     await query("create index if not exists idx_player_referrals_created_at on player_referrals(created_at desc)");
+    await query("create index if not exists idx_system_events_created_at on system_events(created_at desc)");
+    await query("create index if not exists idx_system_events_name on system_events(event_name)");
 
     return true;
   })();
@@ -643,6 +659,44 @@ async function recordAnalyticsEvent(user, event) {
   return { accepted: true };
 }
 
+async function recordSystemEvent(event) {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const level = typeof event?.level === "string" && event.level.trim() ? event.level.trim().slice(0, 40) : "error";
+  const eventName =
+    typeof event?.eventName === "string" && event.eventName.trim()
+      ? event.eventName.trim().slice(0, 100)
+      : "server_error";
+  const statusCode = Number.isFinite(Number(event?.statusCode)) ? Number(event.statusCode) : null;
+  const method = typeof event?.method === "string" && event.method.trim() ? event.method.trim().slice(0, 20) : null;
+  const path = typeof event?.path === "string" && event.path.trim() ? event.path.trim().slice(0, 200) : null;
+  const message =
+    typeof event?.message === "string" && event.message.trim() ? event.message.trim().slice(0, 500) : null;
+  const metadata =
+    event?.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+      ? event.metadata
+      : {};
+
+  await query(
+    `
+      insert into system_events (
+        level,
+        event_name,
+        status_code,
+        method,
+        path,
+        message,
+        metadata
+      )
+      values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+    `,
+    [level, eventName, statusCode, method, path, message, JSON.stringify(metadata)]
+  );
+
+  return { accepted: true };
+}
+
 function normalizeReferralCode(referralCode) {
   return String(referralCode || "")
     .trim()
@@ -807,6 +861,34 @@ async function getTopInviters(period) {
   return result.rows.map((row) => `${row.name}: ${row.invited}`).join(", ") || "нет данных";
 }
 
+async function getSystemEventSummary(period) {
+  const filter = periodFilter(period);
+  const result = await query(`
+    select
+      count(*)::integer as total,
+      count(*) filter (where status_code = 401)::integer as unauthorized,
+      count(*) filter (where status_code >= 500)::integer as server_errors,
+      count(*) filter (where event_name = 'telegram_send_failed')::integer as telegram_send_failed,
+      count(*) filter (where event_name = 'telegram_webhook_secret_invalid')::integer as webhook_secret_invalid
+    from system_events
+    where ${filter}
+  `);
+
+  const topResult = await query(`
+    select event_name, count(*)::integer as value
+    from system_events
+    where ${filter}
+    group by event_name
+    order by value desc
+    limit 5
+  `);
+
+  return {
+    ...result.rows[0],
+    topEvents: topResult.rows.map((row) => `${row.event_name}: ${row.value}`).join(", ") || "нет данных",
+  };
+}
+
 async function getAdminStats() {
   if (!hasDatabase()) return null;
   await initDb();
@@ -824,6 +906,7 @@ async function getAdminStats() {
       ),
       battles,
       events,
+      system: await getSystemEventSummary(period),
       topInviters: await getTopInviters(period),
     };
   }
@@ -835,6 +918,7 @@ async function getAdminStats() {
       activeBattles: await countScalar("select count(*)::integer as value from active_battles"),
       waitingDuels: await countScalar("select count(*)::integer as value from duel_invites where status = 'waiting'"),
       analyticsEvents: await countScalar("select count(*)::integer as value from analytics_events"),
+      systemEvents: await countScalar("select count(*)::integer as value from system_events"),
       zeroEnergyPlayers: await countScalar("select count(*)::integer as value from player_energy where value = 0"),
     },
     byPeriod,
@@ -1064,6 +1148,7 @@ module.exports = {
   joinDuelInvite,
   recordBattleResult,
   recordAnalyticsEvent,
+  recordSystemEvent,
   saveActiveBattle,
   upsertTelegramPlayer,
 };

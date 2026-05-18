@@ -15,6 +15,7 @@ const {
   joinDuelInvite,
   recordAnalyticsEvent,
   recordBattleResult,
+  recordSystemEvent,
   saveActiveBattle,
   upsertTelegramPlayer,
 } = require("./db");
@@ -58,6 +59,16 @@ function sendJson(res, status, body) {
     "Cache-Control": "no-store",
   });
   res.end(JSON.stringify(body));
+}
+
+function logSystemEvent(req, event) {
+  void recordSystemEvent({
+    ...event,
+    method: event.method || req?.method || null,
+    path: event.path || req?.url || null,
+  }).catch((error) => {
+    console.error("Failed to record system event:", error);
+  });
 }
 
 function readBody(req) {
@@ -257,6 +268,11 @@ function serializeBattleState(state, user) {
 function getTelegramUser(req, res) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) {
+    logSystemEvent(req, {
+      eventName: "telegram_bot_token_missing",
+      statusCode: 503,
+      message: "TELEGRAM_BOT_TOKEN is not configured",
+    });
     sendJson(res, 503, { error: "telegram_bot_token_not_configured" });
     return null;
   }
@@ -264,6 +280,11 @@ function getTelegramUser(req, res) {
   const initData = req.headers["x-telegram-init-data"] || "";
   const user = verifyTelegramInitData(String(initData), botToken);
   if (!user) {
+    logSystemEvent(req, {
+      eventName: "telegram_init_data_invalid",
+      statusCode: 401,
+      message: "Invalid Telegram init data",
+    });
     sendJson(res, 401, { error: "invalid_telegram_init_data" });
     return null;
   }
@@ -307,6 +328,7 @@ function isTelegramWebhookSecretValid(req) {
 function formatPeriodStats(title, stats) {
   const events = stats.events || {};
   const battles = stats.battles || {};
+  const system = stats.system || {};
   return [
     `${title}`,
     `Игроки`,
@@ -343,6 +365,14 @@ function formatPeriodStats(title, stats) {
     ``,
     `Топ пригласивших`,
     `${stats.topInviters}`,
+    ``,
+    `Техника`,
+    `Ошибок всего: ${system.total || 0}`,
+    `401: ${system.unauthorized || 0}`,
+    `500+: ${system.server_errors || 0}`,
+    `Ошибок отправки Telegram: ${system.telegram_send_failed || 0}`,
+    `Ошибок webhook secret: ${system.webhook_secret_invalid || 0}`,
+    `Топ ошибок: ${system.topEvents || "нет данных"}`,
   ].join("\n");
 }
 
@@ -354,6 +384,7 @@ function formatAdminStats(stats) {
     `Игроков: ${stats.totals.players}`,
     `Боев: ${stats.totals.battleResults}`,
     `Событий: ${stats.totals.analyticsEvents}`,
+    `Технических событий: ${stats.totals.systemEvents}`,
     "",
     "Сейчас",
     `Активных боев: ${stats.totals.activeBattles}`,
@@ -416,6 +447,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/api/telegram/webhook") {
       if (!isTelegramWebhookSecretValid(req)) {
+        logSystemEvent(req, {
+          eventName: "telegram_webhook_secret_invalid",
+          statusCode: 401,
+          message: "Invalid Telegram webhook secret header",
+        });
         sendJson(res, 401, { error: "invalid_telegram_webhook_secret" });
         return;
       }
@@ -430,6 +466,11 @@ const server = http.createServer(async (req, res) => {
         if (!isAdminTelegramId(fromId)) {
           void sendTelegramMessage(chatId, "Нет доступа к статистике.").catch((error) => {
             console.error("Failed to send Telegram access denied message:", error);
+            logSystemEvent(req, {
+              eventName: "telegram_send_failed",
+              message: error.message || "Failed to send access denied message",
+              metadata: { chatId, command: "stats_denied" },
+            });
           });
           sendJson(res, 200, { ok: true });
           return;
@@ -439,6 +480,11 @@ const server = http.createServer(async (req, res) => {
         const textMessage = stats ? formatAdminStats(stats) : "База статистики недоступна.";
         void sendTelegramMessage(chatId, textMessage).catch((error) => {
           console.error("Failed to send Telegram stats message:", error);
+          logSystemEvent(req, {
+            eventName: "telegram_send_failed",
+            message: error.message || "Failed to send stats message",
+            metadata: { chatId, command: "stats" },
+          });
         });
       }
 
@@ -682,6 +728,12 @@ const server = http.createServer(async (req, res) => {
 
     sendJson(res, 404, { error: "not_found" });
   } catch (error) {
+    logSystemEvent(req, {
+      eventName: "api_server_error",
+      statusCode: 500,
+      message: error.message || "server_error",
+      metadata: { pathname },
+    });
     sendJson(res, 500, { error: error.message || "server_error" });
   }
 });
