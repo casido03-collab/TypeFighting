@@ -23,13 +23,6 @@ type BattlePageProps = {
 
 type AiMood = "confused" | "steady" | "focused" | "aggressive";
 
-const AI_MOOD_LABELS: Record<AiMood, string> = {
-  confused: "ошибка",
-  steady: "ровно",
-  focused: "фокус",
-  aggressive: "давит",
-};
-
 const AI_MIN_WORD_MS = 980;
 const AI_MAX_WORD_MS = 4600;
 const AI_HIT_COOLDOWN_MS = 420;
@@ -59,7 +52,6 @@ export default function BattlePage({
   const [enemyWordIndex, setEnemyWordIndex] = useState(0);
   const [typed, setTyped] = useState("");
   const [action, setAction] = useState("idle");
-  const [aiMood, setAiMood] = useState<AiMood>("steady");
   const [aiTypedCount, setAiTypedCount] = useState(0);
   const [serverBattle, setServerBattle] = useState<BattleStateResponse | null>(null);
   const [serverError, setServerError] = useState("");
@@ -102,12 +94,6 @@ export default function BattlePage({
   const displayedEnemyTypedCount = serverBattle?.opponent.typedCount ?? aiTypedCount;
   const serverFinished = serverBattle?.status === "finished" || serverBattle?.status === "cancelled";
   const serverPlayerWon = serverBattle?.status === "finished" && serverBattle.winnerId === serverBattle.player.id;
-  const serverStatusText =
-    serverBattle?.status === "waiting"
-      ? "Ожидаем соперника"
-      : serverBattle?.status === "cancelled"
-        ? "Бой отменен"
-        : serverBattle?.status;
   const gameOver = playerHp <= 0 || enemyHp <= 0 || serverFinished;
   const resultText = serverFinished ? (serverPlayerWon ? "ПОБЕДА" : "ПОРАЖЕНИЕ") : enemyHp <= 0 ? "ПОБЕДА" : playerHp <= 0 ? "ПОРАЖЕНИЕ" : "";
 
@@ -385,7 +371,6 @@ export default function BattlePage({
 
   function setBotMood(mood: AiMood) {
     aiMoodRef.current = mood;
-    setAiMood(mood);
   }
 
   function pickAiMood(currentCombo = 0) {
@@ -678,8 +663,6 @@ export default function BattlePage({
         maxHp={displayedMaxHp}
         gameOver={gameOver}
         resultText={resultText}
-        aiMood={aiMood}
-        serverStatus={serverStatusText}
         serverError={serverError}
         onRestart={restartBattle}
         onMenu={handleMenu}
@@ -752,8 +735,6 @@ function BattleArena({
   maxHp,
   gameOver,
   resultText,
-  aiMood,
-  serverStatus,
   serverError,
   onRestart,
   onMenu,
@@ -771,8 +752,6 @@ function BattleArena({
   maxHp: number;
   gameOver: boolean;
   resultText: string;
-  aiMood: AiMood;
-  serverStatus?: string;
   serverError?: string;
   onRestart: () => void;
   onMenu: () => void;
@@ -792,8 +771,6 @@ function BattleArena({
         <div style={styles.versus}>VS</div>
         <HpSide name="BOT" hp={`${enemyHp}/${maxHp}`} side="enemy" percent={enemyHp / maxHp} />
       </div>
-
-      <div style={styles.aiMoodTag}>{serverStatus || AI_MOOD_LABELS[aiMood]}</div>
 
       <div style={styles.arenaGround} />
       <Stickman side="player" actionStyle={playerAction} />

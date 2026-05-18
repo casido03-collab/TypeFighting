@@ -154,7 +154,6 @@ export const styles = {
   hpFill: { height: "100%", transition: "width 220ms ease" },
   playerFill: { background: "#84cc16" },
   enemyFill: { marginLeft: "auto", background: "#ef4444" },
-  aiMoodTag: { position: "absolute", right: 22, bottom: "7%", zIndex: 15, padding: "3px 7px", borderRadius: 999, background: "rgba(255,255,255,.42)", fontSize: 8, lineHeight: 1, fontWeight: 1000, textTransform: "uppercase", opacity: 0.62 },
   arenaGround: { position: "absolute", left: 0, right: 0, bottom: 0, height: "48%", background: "linear-gradient(#bef264 0%, #65a30d 42%, #14532d 100%)" },
   battleCharacterAsset: { width: "100%", height: "100%", overflow: "visible", filter: "drop-shadow(0 8px 12px rgba(0,0,0,.22))" },
   battleCharacterEnemy: { transform: "scaleX(-1)" },
