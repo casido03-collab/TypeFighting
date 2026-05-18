@@ -297,26 +297,26 @@ function formatPeriodStats(title, stats) {
   const battles = stats.battles || {};
   return [
     `${title}`,
-    `users: +${stats.newUsers}, active ${stats.activeUsers}`,
-    `battles: ${battles.battles || 0} (AI ${battles.ai_battles || 0}, friend ${battles.friend_battles || 0}, online ${battles.online_battles || 0})`,
-    `avg: ${battles.avg_wpm || 0} WPM, ${battles.avg_seconds || 0}s, max ${battles.max_wpm || 0} WPM, combo ${battles.max_combo || 0}`,
-    `duels: created ${events.duel_created || 0}, copied ${events.duel_copied || 0}, shared ${events.duel_shared || 0}, opened ${events.duel_join_opened || 0}, joined ${events.duel_joined || 0}, expired ${events.duel_expired || 0}`,
-    `refs: created ${events.ref_link_created || 0}, copied ${events.ref_link_copied || 0}, shared ${events.ref_link_shared || 0}, opened ${events.ref_opened || 0}, registered ${events.ref_registered || 0}, first battle ${events.ref_first_battle || 0}`,
-    `top inviters: ${stats.topInviters}`,
+    `Игроки: новых ${stats.newUsers}, активных ${stats.activeUsers}`,
+    `Бои: ${battles.battles || 0} (ИИ ${battles.ai_battles || 0}, друг ${battles.friend_battles || 0}, онлайн ${battles.online_battles || 0})`,
+    `Темп: средний ${battles.avg_wpm || 0} WPM, ${battles.avg_seconds || 0} сек, максимум ${battles.max_wpm || 0} WPM, комбо ${battles.max_combo || 0}`,
+    `Дуэли: создано ${events.duel_created || 0}, скопировано ${events.duel_copied || 0}, поделились ${events.duel_shared || 0}, открыто ${events.duel_join_opened || 0}, вошли ${events.duel_joined || 0}, истекло ${events.duel_expired || 0}`,
+    `Рефералки: создано ${events.ref_link_created || 0}, скопировано ${events.ref_link_copied || 0}, поделились ${events.ref_link_shared || 0}, открыто ${events.ref_opened || 0}, регистраций ${events.ref_registered || 0}, первых боев ${events.ref_first_battle || 0}`,
+    `Топ пригласивших: ${stats.topInviters}`,
   ].join("\n");
 }
 
 function formatAdminStats(stats) {
   return [
-    "Type Fight stats",
-    `total: players ${stats.totals.players}, battles ${stats.totals.battleResults}, events ${stats.totals.analyticsEvents}`,
-    `live: active battles ${stats.totals.activeBattles}, waiting duels ${stats.totals.waitingDuels}, zero energy ${stats.totals.zeroEnergyPlayers}`,
+    "Статистика Type Fight",
+    `Всего: игроков ${stats.totals.players}, боев ${stats.totals.battleResults}, событий ${stats.totals.analyticsEvents}`,
+    `Сейчас: активных боев ${stats.totals.activeBattles}, дуэлей в ожидании ${stats.totals.waitingDuels}, игроков без энергии ${stats.totals.zeroEnergyPlayers}`,
     "",
-    formatPeriodStats("Today", stats.byPeriod.today),
+    formatPeriodStats("Сегодня", stats.byPeriod.today),
     "",
-    formatPeriodStats("Yesterday", stats.byPeriod.yesterday),
+    formatPeriodStats("Вчера", stats.byPeriod.yesterday),
     "",
-    formatPeriodStats("Last 7 days", stats.byPeriod.week),
+    formatPeriodStats("Последние 7 дней", stats.byPeriod.week),
   ].join("\n");
 }
 
