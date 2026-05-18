@@ -944,7 +944,11 @@ function TypingDock({
       />
       <button
         className="tk-visible-typebox"
-        style={{ ...styles.realInput, ...(action === "wrong" ? styles.realInputWrong : {}) }}
+        style={{
+          ...styles.realInput,
+          ...(!typed ? styles.realInputPlaceholder : {}),
+          ...(action === "wrong" ? styles.realInputWrong : {}),
+        }}
         type="button"
         disabled={disabled}
         onClick={focusInput}

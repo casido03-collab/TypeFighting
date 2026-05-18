@@ -177,6 +177,7 @@ export const styles = {
   typingWord: { fontSize: "clamp(21px, 6vw, 24px)", lineHeight: 1, fontWeight: 900, marginTop: 0, color: "rgba(15,23,42,.92)" },
   nativeInputProxy: { position: "fixed", left: 0, bottom: 0, width: 1, height: 1, opacity: 0.01, border: 0, padding: 0, fontSize: 16, pointerEvents: "none", transform: "translate3d(0,0,0)" },
   realInput: { width: "100%", marginTop: 5, padding: "clamp(6px, 1vh, 8px) 10px", border: "2px solid rgba(15,23,42,.35)", borderRadius: 14, background: "rgba(255,255,255,.42)", color: "#111827", fontSize: 16, fontWeight: 800, textAlign: "center", outline: "none", minHeight: "clamp(36px, 5vh, 40px)", backdropFilter: "blur(4px)", boxSizing: "border-box" },
+  realInputPlaceholder: { color: "rgba(15,23,42,.36)", fontWeight: 800 },
   realInputWrong: { background: "#fee2e2", boxShadow: "0 0 0 5px rgba(239,68,68,.25)" },
   resultOverlay: { position: "absolute", inset: 0, zIndex: 30, display: "grid", placeItems: "center", padding: 14, boxSizing: "border-box", background: "rgba(15,23,42,.72)", color: "white", textAlign: "center" },
   resultTitle: { maxWidth: "100%", fontSize: "clamp(34px, 11vw, 54px)", lineHeight: 0.95, fontWeight: 1000, overflowWrap: "anywhere" },
