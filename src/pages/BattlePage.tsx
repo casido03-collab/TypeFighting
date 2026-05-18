@@ -905,9 +905,13 @@ function TypingDock({
       <div style={styles.typingWord}>{currentWord}</div>
       <input
         ref={inputRef}
-        className="tk-native-input-proxy"
-        style={styles.nativeInputProxy}
+        className="tk-battle-text-input"
+        style={{
+          ...styles.realInput,
+          ...(action === "wrong" ? styles.realInputWrong : {}),
+        }}
         value={typed}
+        placeholder="печатай..."
         onChange={(event) => onType(event.target.value)}
         onFocus={onFocus}
         onBlur={onBlur}
@@ -919,19 +923,6 @@ function TypingDock({
         enterKeyHint="go"
         spellCheck={false}
       />
-      <button
-        className="tk-visible-typebox"
-        style={{
-          ...styles.realInput,
-          ...(!typed ? styles.realInputPlaceholder : {}),
-          ...(action === "wrong" ? styles.realInputWrong : {}),
-        }}
-        type="button"
-        disabled={disabled}
-        onClick={focusInput}
-      >
-        {typed || "печатай..."}
-      </button>
     </section>
   );
 }

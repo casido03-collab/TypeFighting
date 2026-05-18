@@ -100,18 +100,19 @@ input {
     border-radius: 16px !important;
   }
 
-  .tk-native-input-proxy {
-    font-size: 16px !important;
-    touch-action: manipulation;
-  }
-
-  .tk-visible-typebox {
+  .tk-battle-text-input {
     display: grid !important;
     place-items: center !important;
     font-size: 16px !important;
     -webkit-user-select: none;
     user-select: none;
+    touch-action: manipulation;
   }
+}
+
+.tk-battle-text-input::placeholder {
+  color: rgba(15, 23, 42, 0.36);
+  opacity: 1;
 }
 
 @media (max-height: 560px) {
