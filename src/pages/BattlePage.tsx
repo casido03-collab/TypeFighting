@@ -304,10 +304,24 @@ export default function BattlePage({
     void api.leaveBattle(currentBattleId).catch(() => null);
   }
 
+  function releaseBattleViewport() {
+    typingInputRef.current?.blur();
+    document.documentElement.classList.remove("tk-battle-active");
+    telegram.refreshViewport();
+  }
+
   function handleMenu() {
+    if (leavingBattleRef.current) return;
+
     leavingBattleRef.current = true;
     reportBattleLeave();
-    onMenu();
+    setIsTypingFocused(false);
+    releaseBattleViewport();
+
+    window.setTimeout(() => {
+      telegram.refreshViewport();
+      onMenu();
+    }, 120);
   }
 
   function resetDelayed(ms = TOTAL_HURT_MS) {
