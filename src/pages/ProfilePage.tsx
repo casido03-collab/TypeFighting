@@ -63,11 +63,24 @@ export default function ProfilePage({
     const refCode = new URL(refLink).searchParams.get("startapp") || undefined;
     void api.trackEvent({ eventName: "ref_link_shared", refCode });
 
+    const shareText = "Заходи в Type Fight по моей ссылке";
+    const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(refLink)}&text=${encodeURIComponent(shareText)}`;
+
+    if (window.Telegram?.WebApp?.openTelegramLink) {
+      window.Telegram.WebApp.openTelegramLink(telegramShareUrl);
+      return;
+    }
+
+    if (window.Telegram?.WebApp?.openLink) {
+      window.Telegram.WebApp.openLink(telegramShareUrl);
+      return;
+    }
+
     if (navigator.share) {
       try {
         await navigator.share({
           title: "Type Fight",
-          text: "Заходи в Type Fight по моей ссылке",
+          text: shareText,
           url: refLink,
         });
       } catch {
