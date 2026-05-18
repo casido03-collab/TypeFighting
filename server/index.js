@@ -23,6 +23,7 @@ const {
 const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -52,6 +53,7 @@ const LEADERS = [
 ];
 const SERVER_WORDS = ["арена", "рывок", "пламя", "фокус", "мечта", "удар", "щит", "раунд", "искра", "темп"];
 const activeBattles = new Map();
+const matchmakingQueue = new Map();
 
 function sendJson(res, status, body) {
   res.writeHead(status, {
@@ -185,12 +187,13 @@ function pickServerWord(round = 0) {
   return SERVER_WORDS[Math.abs(round) % SERVER_WORDS.length];
 }
 
-function createFriendBattle(battleId, user, opponent) {
+function createFriendBattle(battleId, user, opponent, mode = "friend") {
   const word = pickServerWord(0);
   const playerId = String(user.id);
   const opponentId = opponent?.id || "friend";
   const state = {
     battleId,
+    mode,
     status: "active",
     maxHp: 120,
     round: 1,
@@ -221,6 +224,79 @@ function createFriendBattle(battleId, user, opponent) {
     console.error("Failed to save active battle:", error);
   });
   return state;
+}
+
+function clearMatchmakingEntry(playerId) {
+  const entry = matchmakingQueue.get(playerId);
+  if (!entry) return;
+
+  clearTimeout(entry.timeout);
+  matchmakingQueue.delete(playerId);
+}
+
+function serializeMatchmakingOpponent(user) {
+  return {
+    id: String(user.id),
+    name: displayNameFromUser(user),
+    league: "Novice",
+    wpm: 0,
+  };
+}
+
+function findWaitingMatch(userId) {
+  for (const [waitingUserId, entry] of matchmakingQueue.entries()) {
+    if (waitingUserId !== userId) return entry;
+  }
+
+  return null;
+}
+
+function runMatchmaking(user) {
+  const userId = String(user.id);
+  clearMatchmakingEntry(userId);
+
+  const waitingEntry = findWaitingMatch(userId);
+  if (waitingEntry) {
+    clearMatchmakingEntry(waitingEntry.userId);
+
+    const battleId = createBattleId();
+    createFriendBattle(battleId, waitingEntry.user, serializeMatchmakingOpponent(user), "online");
+
+    const currentOpponent = serializeMatchmakingOpponent(waitingEntry.user);
+    const waitingOpponent = serializeMatchmakingOpponent(user);
+
+    waitingEntry.resolve({
+      status: "matched",
+      battleId,
+      opponent: waitingOpponent,
+      message: "Соперник найден.",
+    });
+
+    return Promise.resolve({
+      status: "matched",
+      battleId,
+      opponent: currentOpponent,
+      message: "Соперник найден.",
+    });
+  }
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      matchmakingQueue.delete(userId);
+      resolve({
+        status: "unavailable",
+        message: "Соперник не найден за 20 секунд. Попробуйте еще раз.",
+      });
+    }, MATCHMAKING_TIMEOUT_MS);
+
+    matchmakingQueue.set(userId, {
+      userId,
+      user,
+      resolve,
+      timeout,
+      createdAt: Date.now(),
+    });
+  });
 }
 
 async function getBattleState(battleId) {
@@ -694,10 +770,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/api/matchmaking") {
-      sendJson(res, 200, {
-        status: "unavailable",
-        message: "Онлайн-поиск подключим после серверных комнат.",
-      });
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const result = await runMatchmaking(user);
+      sendJson(res, 200, result);
       return;
     }
 
