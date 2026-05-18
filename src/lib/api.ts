@@ -308,6 +308,24 @@ export const api = {
     });
   },
 
+  async trackEvent(event: {
+    eventName: string;
+    eventSource?: string;
+    duelId?: string;
+    refCode?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    if (!canUseApi()) {
+      return null;
+    }
+
+    return request<{ accepted: boolean }>("/analytics/events", {
+      method: "POST",
+      body: event,
+      keepalive: true,
+    });
+  },
+
   async syncSession(): Promise<TelegramSessionResponse | null> {
     if (!canUseApi()) {
       return null;

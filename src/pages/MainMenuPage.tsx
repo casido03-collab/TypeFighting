@@ -2,6 +2,7 @@ import { useState } from "react";
 import { BottomNav } from "../components/BottomNav";
 import { HeroCharacter } from "../components/HeroCharacter";
 import { TopBar } from "../components/TopBar";
+import { api } from "../lib/api";
 import type { PlayerProfile } from "../lib/playerProfile";
 import { styles } from "../styles/styles";
 
@@ -48,6 +49,9 @@ export default function MainMenuPage({
 
   async function shareDuelLink() {
     if (!duelLink) return;
+
+    const duelId = new URL(duelLink).searchParams.get("startapp") || undefined;
+    void api.trackEvent({ eventName: "duel_shared", duelId });
 
     const shareText = "Присоединяйся к дуэли в Type Fight";
     const telegramShareUrl = `https://t.me/share/url?url=${encodeURIComponent(duelLink)}&text=${encodeURIComponent(shareText)}`;

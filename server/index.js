@@ -11,6 +11,7 @@ const {
   hasDatabase,
   initDb,
   joinDuelInvite,
+  recordAnalyticsEvent,
   recordBattleResult,
   saveActiveBattle,
   upsertTelegramPlayer,
@@ -489,6 +490,14 @@ const server = http.createServer(async (req, res) => {
         accepted: false,
         message: "Реферальную систему подключим после базы.",
       });
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/analytics/events") {
+      const user = getOptionalTelegramUser(req);
+      const body = JSON.parse((await readBody(req)) || "{}");
+      const result = await recordAnalyticsEvent(user, body);
+      sendJson(res, 200, result || { accepted: false });
       return;
     }
 

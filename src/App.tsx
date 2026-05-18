@@ -221,6 +221,7 @@ export default function App() {
     }
 
     if (action.type === "referral") {
+      void api.trackEvent({ eventName: "ref_opened", refCode: action.referralCode });
       if (!api.isConfigured) {
         showSearchMessage("Реферальная ссылка распознана. Начисление подключим на сервере.", 3000);
         return;
@@ -239,6 +240,7 @@ export default function App() {
     }
 
     if (!api.isConfigured) {
+      void api.trackEvent({ eventName: "duel_join_opened", duelId: action.duelId });
       setDuelLink(buildStartAppLink(action.duelId));
       setDuelCopied(false);
       setDuelInviteOpen(true);
@@ -247,6 +249,7 @@ export default function App() {
     }
 
     try {
+      void api.trackEvent({ eventName: "duel_join_opened", duelId: action.duelId });
       const duel = await api.joinDuel(action.duelId);
 
       if (duel?.status === "joined") {
@@ -357,6 +360,7 @@ export default function App() {
     try {
       const invite = await api.createDuelInvite();
 
+      void api.trackEvent({ eventName: "duel_created", duelId: invite.duelId });
       setDuelLink(buildStartAppLink(invite.startParam));
       setPendingDuelId(invite.duelId);
       setDuelCopied(false);
@@ -391,6 +395,9 @@ export default function App() {
 
   async function copyDuelLink() {
     if (!duelLink) return;
+
+    const duelId = new URL(duelLink).searchParams.get("startapp") || undefined;
+    void api.trackEvent({ eventName: "duel_copied", duelId });
 
     try {
       await navigator.clipboard.writeText(duelLink);

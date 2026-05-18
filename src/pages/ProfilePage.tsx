@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Language } from "../App";
 import { BottomNav } from "../components/BottomNav";
+import { api } from "../lib/api";
 import type { PlayerProfile } from "../lib/playerProfile";
 import { buildStartAppLink } from "../lib/telegramLinks";
 import { styles } from "../styles/styles";
@@ -42,6 +43,9 @@ export default function ProfilePage({
   }, []);
 
   async function copyReferralLink() {
+    const refCode = new URL(refLink).searchParams.get("startapp") || undefined;
+    void api.trackEvent({ eventName: "ref_link_copied", refCode });
+
     try {
       await navigator.clipboard.writeText(refLink);
     } catch {
@@ -54,6 +58,9 @@ export default function ProfilePage({
   }
 
   async function shareReferralLink() {
+    const refCode = new URL(refLink).searchParams.get("startapp") || undefined;
+    void api.trackEvent({ eventName: "ref_link_shared", refCode });
+
     if (navigator.share) {
       try {
         await navigator.share({
@@ -116,6 +123,8 @@ export default function ProfilePage({
             style={styles.dailyButton}
             type="button"
             onClick={() => {
+              const refCode = new URL(refLink).searchParams.get("startapp") || undefined;
+              void api.trackEvent({ eventName: "ref_link_created", refCode });
               setRefOpen(true);
               setRefCopied(false);
             }}

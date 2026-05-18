@@ -116,6 +116,19 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists analytics_events (
+        id uuid primary key default gen_random_uuid(),
+        player_id uuid references players(id) on delete set null,
+        event_name text not null,
+        event_source text,
+        duel_id text,
+        ref_code text,
+        metadata jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now()
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
@@ -127,6 +140,8 @@ async function initDb() {
     await query("create index if not exists idx_duel_invites_expires_at on duel_invites(expires_at)");
     await query("create index if not exists idx_duel_invites_battle_id on duel_invites(battle_id)");
     await query("create index if not exists idx_active_battles_status on active_battles(status)");
+    await query("create index if not exists idx_analytics_events_created_at on analytics_events(created_at desc)");
+    await query("create index if not exists idx_analytics_events_name on analytics_events(event_name)");
 
     return true;
   })();
@@ -345,6 +360,10 @@ async function joinDuelInvite(user, duelId, battleId) {
   if (!invite) return { status: "not_found" };
   if (new Date(invite.expires_at).getTime() < Date.now()) {
     await query("update duel_invites set status = 'expired', updated_at = now() where duel_id = $1", [duelId]);
+    await query(
+      "insert into analytics_events (player_id, event_name, event_source, duel_id) values ($1, 'duel_expired', 'server', $2)",
+      [playerRow.id, duelId]
+    );
     return { status: "expired" };
   }
 
@@ -381,6 +400,11 @@ async function joinDuelInvite(user, duelId, battleId) {
   );
 
   if (joinedResult.rows.length === 0) return { status: "not_found" };
+
+  await query(
+    "insert into analytics_events (player_id, event_name, event_source, duel_id, metadata) values ($1, 'duel_joined', 'server', $2, $3::jsonb)",
+    [playerRow.id, duelId, JSON.stringify({ battleId: nextBattleId })]
+  );
 
   return {
     status: "joined",
@@ -489,6 +513,13 @@ async function cleanupExpiredGameRows() {
     returning duel_id
   `);
 
+  for (const row of expiredDuels.rows) {
+    await query(
+      "insert into analytics_events (event_name, event_source, duel_id) values ('duel_expired', 'cleanup', $1)",
+      [row.duel_id]
+    );
+  }
+
   const deletedBattles = await query(`
     delete from active_battles
     where
@@ -509,6 +540,52 @@ async function cleanupExpiredGameRows() {
     deletedBattles: deletedBattles.rows.length,
     deletedDuels: deletedDuels.rows.length,
   };
+}
+
+async function recordAnalyticsEvent(user, event) {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const playerRow = user?.id ? await ensureTelegramPlayer(user) : null;
+  const eventName = typeof event?.eventName === "string" ? event.eventName.trim().slice(0, 80) : "";
+  if (!eventName) throw new Error("invalid_analytics_event");
+
+  const eventSource =
+    typeof event.eventSource === "string" && event.eventSource.trim()
+      ? event.eventSource.trim().slice(0, 80)
+      : "mini_app";
+  const duelId =
+    typeof event.duelId === "string" && event.duelId.trim() ? event.duelId.trim().slice(0, 120) : null;
+  const refCode =
+    typeof event.refCode === "string" && event.refCode.trim() ? event.refCode.trim().slice(0, 120) : null;
+  const metadata =
+    event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
+      ? event.metadata
+      : {};
+
+  await query(
+    `
+      insert into analytics_events (
+        player_id,
+        event_name,
+        event_source,
+        duel_id,
+        ref_code,
+        metadata
+      )
+      values ($1, $2, $3, $4, $5, $6::jsonb)
+    `,
+    [
+      playerRow?.id || null,
+      eventName,
+      eventSource,
+      duelId,
+      refCode,
+      JSON.stringify(metadata),
+    ]
+  );
+
+  return { accepted: true };
 }
 
 async function recordBattleResult(user, result) {
@@ -710,6 +787,7 @@ module.exports = {
   initDb,
   joinDuelInvite,
   recordBattleResult,
+  recordAnalyticsEvent,
   saveActiveBattle,
   upsertTelegramPlayer,
 };
