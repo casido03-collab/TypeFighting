@@ -27,6 +27,7 @@ const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 const MIN_SERVER_WORD_MS_PER_LETTER = 80;
 const ADMIN_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const DEFAULT_TELEGRAM_APP_URL = "https://typefight.shop";
+const DEFAULT_TELEGRAM_VPN_URL = "https://t.me/ScroogeVPNRobot?start=partner_2102945039";
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -93,7 +94,7 @@ function getPublicAppUrl() {
 }
 
 function getVpnReferralUrl() {
-  return String(process.env.TELEGRAM_VPN_URL || DEFAULT_TELEGRAM_APP_URL).trim();
+  return String(process.env.TELEGRAM_VPN_URL || DEFAULT_TELEGRAM_VPN_URL).trim();
 }
 
 function sendAdminAlert(eventName, text) {
