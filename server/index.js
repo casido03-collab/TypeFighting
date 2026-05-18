@@ -176,6 +176,7 @@ function createFriendBattle(battleId, user, opponent) {
     status: "active",
     maxHp: 120,
     round: 1,
+    roundStartedAt: Date.now(),
     wordLength: word.length,
     participantIds: [playerId, opponentId],
     participants: {
@@ -397,6 +398,16 @@ const server = http.createServer(async (req, res) => {
       }
 
       const { player, opponent } = getBattleSides(state, user);
+      if (Number(body.round) !== state.round) {
+        sendJson(res, 200, {
+          accepted: false,
+          state: serializeBattleState(state, user),
+          outcome: "rejected",
+          rejectionReason: "stale_round",
+        });
+        return;
+      }
+
       if (String(body.word || "").toLowerCase() !== player.word) {
         sendJson(res, 200, {
           accepted: false,
@@ -409,6 +420,7 @@ const server = http.createServer(async (req, res) => {
 
       opponent.hp = Math.max(0, opponent.hp - 15);
       state.round += 1;
+      state.roundStartedAt = Date.now();
       const nextWord = pickServerWord(state.round);
       for (const participant of Object.values(state.participants)) {
         participant.word = nextWord;

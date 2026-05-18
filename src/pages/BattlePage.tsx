@@ -597,6 +597,10 @@ export default function BattlePage({
       if (!result?.accepted) {
         setCombo(0);
         setTyped("");
+        if (result?.rejectionReason === "stale_round" || result?.rejectionReason === "battle_finished") {
+          setServerError("");
+          return;
+        }
         setAction("wrong");
         setServerError(result?.message || "Сервер отклонил слово. Попробуй еще раз.");
         resetDelayed(350);
