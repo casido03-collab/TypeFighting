@@ -129,6 +129,18 @@ async function initDb() {
       )
     `);
 
+    await query(`
+      create table if not exists player_referrals (
+        id uuid primary key default gen_random_uuid(),
+        inviter_id uuid not null references players(id) on delete cascade,
+        invited_id uuid not null references players(id) on delete cascade,
+        ref_code text not null,
+        created_at timestamptz not null default now(),
+        first_battle_at timestamptz,
+        unique (invited_id)
+      )
+    `);
+
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
@@ -142,6 +154,8 @@ async function initDb() {
     await query("create index if not exists idx_active_battles_status on active_battles(status)");
     await query("create index if not exists idx_analytics_events_created_at on analytics_events(created_at desc)");
     await query("create index if not exists idx_analytics_events_name on analytics_events(event_name)");
+    await query("create index if not exists idx_player_referrals_inviter on player_referrals(inviter_id)");
+    await query("create index if not exists idx_player_referrals_created_at on player_referrals(created_at desc)");
 
     return true;
   })();
@@ -588,6 +602,109 @@ async function recordAnalyticsEvent(user, event) {
   return { accepted: true };
 }
 
+function normalizeReferralCode(referralCode) {
+  return String(referralCode || "")
+    .trim()
+    .replace(/^ref_/i, "")
+    .slice(0, 120);
+}
+
+async function applyReferral(user, referralCode) {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const invitedPlayer = await ensureTelegramPlayer(user);
+  if (!invitedPlayer) return null;
+
+  const normalizedCode = normalizeReferralCode(referralCode);
+  if (!normalizedCode) {
+    return {
+      accepted: false,
+      message: "Реферальная ссылка некорректна.",
+    };
+  }
+
+  const inviterResult = await query(
+    `
+      select id, display_name
+      from players
+      where telegram_id::text = $1
+      limit 1
+    `,
+    [normalizedCode]
+  );
+  const inviter = inviterResult.rows[0];
+
+  if (!inviter) {
+    return {
+      accepted: false,
+      message: "Пригласивший игрок пока не найден.",
+    };
+  }
+
+  if (inviter.id === invitedPlayer.id) {
+    return {
+      accepted: false,
+      message: "Нельзя использовать свою реферальную ссылку.",
+    };
+  }
+
+  const existingResult = await query(
+    `
+      select r.inviter_id, p.display_name as inviter_name
+      from player_referrals r
+      join players p on p.id = r.inviter_id
+      where r.invited_id = $1
+      limit 1
+    `,
+    [invitedPlayer.id]
+  );
+  const existingReferral = existingResult.rows[0];
+
+  if (existingReferral) {
+    return {
+      accepted: true,
+      invitedBy: existingReferral.inviter_name,
+      message: `Рефералка уже привязана к ${existingReferral.inviter_name}.`,
+    };
+  }
+
+  const insertedReferral = await query(
+    `
+      insert into player_referrals (inviter_id, invited_id, ref_code)
+      values ($1, $2, $3)
+      on conflict (invited_id) do nothing
+      returning id
+    `,
+    [inviter.id, invitedPlayer.id, normalizedCode]
+  );
+
+  if (insertedReferral.rows.length > 0) {
+    await query(
+      `
+        update player_stats
+        set invited_count = invited_count + 1, updated_at = now()
+        where player_id = $1
+      `,
+      [inviter.id]
+    );
+
+    await query(
+      `
+        insert into analytics_events (player_id, event_name, event_source, ref_code, metadata)
+        values ($1, 'ref_registered', 'server', $2, $3::jsonb)
+      `,
+      [inviter.id, normalizedCode, JSON.stringify({ invitedPlayerId: invitedPlayer.id })]
+    );
+  }
+
+  return {
+    accepted: true,
+    invitedBy: inviter.display_name,
+    message: `Рефералка привязана к ${inviter.display_name}.`,
+  };
+}
+
 async function countScalar(sql, params = []) {
   const result = await query(sql, params);
   return Number(result.rows[0]?.value || 0);
@@ -638,10 +755,9 @@ async function getTopInviters(period) {
     select
       coalesce(p.display_name, 'Player') as name,
       count(*)::integer as invited
-    from analytics_events e
-    left join players p on p.id = e.player_id
-    where e.event_name in ('ref_link_shared', 'ref_link_copied', 'ref_registered')
-      and ${filter.replaceAll("created_at", "e.created_at")}
+    from player_referrals r
+    join players p on p.id = r.inviter_id
+    where ${filter.replaceAll("created_at", "r.created_at")}
     group by p.display_name
     order by invited desc
     limit 5
@@ -733,6 +849,27 @@ async function recordBattleResult(user, result) {
       energySpent: 0,
       duplicate: true,
     };
+  }
+
+  const firstReferralBattle = await query(
+    `
+      update player_referrals
+      set first_battle_at = now()
+      where invited_id = $1
+        and first_battle_at is null
+      returning inviter_id, ref_code
+    `,
+    [playerRow.id]
+  );
+
+  for (const row of firstReferralBattle.rows) {
+    await query(
+      `
+        insert into analytics_events (player_id, event_name, event_source, ref_code, metadata)
+        values ($1, 'ref_first_battle', 'server', $2, $3::jsonb)
+      `,
+      [row.inviter_id, row.ref_code, JSON.stringify({ invitedPlayerId: playerRow.id, battleMode: result.mode })]
+    );
   }
 
   await query(
@@ -875,6 +1012,7 @@ async function getLeaderboard(period, user = null) {
 
 module.exports = {
   cleanupExpiredGameRows,
+  applyReferral,
   createDuelInvite,
   getActiveBattle,
   getDuelInviteStatus,

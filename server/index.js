@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const {
+  applyReferral,
   cleanupExpiredGameRows,
   createDuelInvite,
   getActiveBattle,
@@ -300,7 +301,7 @@ function formatPeriodStats(title, stats) {
     `battles: ${battles.battles || 0} (AI ${battles.ai_battles || 0}, friend ${battles.friend_battles || 0}, online ${battles.online_battles || 0})`,
     `avg: ${battles.avg_wpm || 0} WPM, ${battles.avg_seconds || 0}s, max ${battles.max_wpm || 0} WPM, combo ${battles.max_combo || 0}`,
     `duels: created ${events.duel_created || 0}, copied ${events.duel_copied || 0}, shared ${events.duel_shared || 0}, opened ${events.duel_join_opened || 0}, joined ${events.duel_joined || 0}, expired ${events.duel_expired || 0}`,
-    `refs: created ${events.ref_link_created || 0}, copied ${events.ref_link_copied || 0}, shared ${events.ref_link_shared || 0}, opened ${events.ref_opened || 0}, registered ${events.ref_registered || 0}`,
+    `refs: created ${events.ref_link_created || 0}, copied ${events.ref_link_copied || 0}, shared ${events.ref_link_shared || 0}, opened ${events.ref_opened || 0}, registered ${events.ref_registered || 0}, first battle ${events.ref_first_battle || 0}`,
     `top inviters: ${stats.topInviters}`,
   ].join("\n");
 }
@@ -564,11 +565,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/api/referrals") {
-      await readBody(req);
-      sendJson(res, 200, {
-        accepted: false,
-        message: "Реферальную систему подключим после базы.",
-      });
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+
+      const body = JSON.parse((await readBody(req)) || "{}");
+      sendJson(res, 200, await applyReferral(user, body.referralCode));
       return;
     }
 

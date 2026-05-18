@@ -3,6 +3,7 @@ import type { Language } from "../App";
 import { BottomNav } from "../components/BottomNav";
 import { api } from "../lib/api";
 import type { PlayerProfile } from "../lib/playerProfile";
+import { telegram } from "../lib/telegram";
 import { buildStartAppLink } from "../lib/telegramLinks";
 import { styles } from "../styles/styles";
 import { TopBar } from "../components/TopBar";
@@ -34,7 +35,8 @@ export default function ProfilePage({
   const [refOpen, setRefOpen] = useState(false);
   const [refCopied, setRefCopied] = useState(false);
   const refCopiedTimer = useRef<number | null>(null);
-  const refLink = buildStartAppLink(`ref_${player.name.replace(/\s+/g, "").toUpperCase()}`);
+  const refCode = telegram.user?.id ? String(telegram.user.id) : player.name.replace(/\s+/g, "").toUpperCase();
+  const refLink = buildStartAppLink(`ref_${refCode}`);
 
   useEffect(() => {
     return () => {
