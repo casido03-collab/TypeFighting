@@ -146,6 +146,16 @@ export default function BattlePage({
   }
 
   useEffect(() => {
+    document.documentElement.classList.add("tk-battle-active");
+    telegram.refreshViewport();
+
+    return () => {
+      document.documentElement.classList.remove("tk-battle-active");
+      telegram.refreshViewport();
+    };
+  }, []);
+
+  useEffect(() => {
     focusTypingInput(80);
   }, []);
 

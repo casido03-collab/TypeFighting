@@ -71,7 +71,8 @@ function setViewportVars() {
   const viewportHeight = webApp?.viewportHeight || window.innerHeight;
   const stableHeight = webApp?.viewportStableHeight || viewportHeight;
   const visualHeight = window.visualViewport?.height || viewportHeight;
-  const appHeight = Math.min(viewportHeight, visualHeight);
+  const isBattleActive = document.documentElement.classList.contains("tk-battle-active");
+  const appHeight = isBattleActive ? viewportHeight : Math.min(viewportHeight, visualHeight);
 
   document.documentElement.style.setProperty("--tg-viewport-height", `${viewportHeight}px`);
   document.documentElement.style.setProperty("--tg-viewport-stable-height", `${stableHeight}px`);
@@ -137,6 +138,10 @@ export const telegram = {
       webApp.offEvent("themeChanged", setThemeVars);
       window.visualViewport?.removeEventListener("resize", setViewportVars);
     };
+  },
+
+  refreshViewport() {
+    setViewportVars();
   },
 
   impact(style: TelegramHapticStyle = "light") {
