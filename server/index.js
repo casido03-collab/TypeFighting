@@ -24,6 +24,7 @@ const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
+const MIN_SERVER_WORD_MS_PER_LETTER = 80;
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -725,6 +726,19 @@ const server = http.createServer(async (req, res) => {
           state: serializeBattleState(state, user),
           outcome: "rejected",
           rejectionReason: "wrong_word",
+        });
+        return;
+      }
+
+      const elapsedRoundMs = Date.now() - Number(state.roundStartedAt || 0);
+      const minRoundMs = Math.max(320, player.word.length * MIN_SERVER_WORD_MS_PER_LETTER);
+      if (elapsedRoundMs < minRoundMs) {
+        sendJson(res, 200, {
+          accepted: false,
+          state: serializeBattleState(state, user),
+          outcome: "rejected",
+          rejectionReason: "too_fast",
+          message: "Слово отправлено слишком быстро.",
         });
         return;
       }

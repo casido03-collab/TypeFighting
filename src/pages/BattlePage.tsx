@@ -149,6 +149,7 @@ export default function BattlePage({
     resultReported.current = true;
     onBattleComplete?.({
       resultId: createBattleResultId(),
+      battleId: battleId || null,
       mode,
       outcome: serverFinished ? (serverPlayerWon ? "win" : "loss") : enemyHp <= 0 ? "win" : "loss",
       combo,

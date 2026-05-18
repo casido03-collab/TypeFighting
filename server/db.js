@@ -933,10 +933,27 @@ async function recordBattleResult(user, result) {
 
   const playerRow = await ensureTelegramPlayer(user);
   if (!playerRow) return null;
+  const playerTelegramId = String(user.id);
+  const battleId =
+    typeof result.battleId === "string" && result.battleId.trim()
+      ? result.battleId.trim().slice(0, 120)
+      : null;
+
+  if (result.mode !== "ai") {
+    if (!battleId) throw new Error("battle_id_required");
+
+    const battleState = await getActiveBattle(battleId);
+    if (!battleState) throw new Error("battle_not_found");
+    if (!battleState.participants?.[playerTelegramId]) throw new Error("battle_participant_invalid");
+    if (battleState.status !== "finished") throw new Error("battle_not_finished");
+
+    const expectedOutcome = String(battleState.winnerId) === playerTelegramId ? "win" : "loss";
+    if (result.outcome !== expectedOutcome) throw new Error("battle_outcome_mismatch");
+  }
 
   const resultId =
     typeof result.resultId === "string" && result.resultId.trim()
-      ? result.resultId.trim().slice(0, 120)
+      ? `${battleId ? `${battleId}:` : ""}${result.resultId.trim()}`.slice(0, 120)
       : `${result.mode}:${result.outcome}:${result.finishedAt}:${result.durationMs}:${result.combo}`;
 
   const isWin = result.outcome === "win";
