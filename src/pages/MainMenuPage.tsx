@@ -85,14 +85,6 @@ export default function MainMenuPage({
   return (
     <div style={styles.menuLayout}>
       <TopBar />
-      <div style={styles.homeLandscapeLayer} aria-hidden="true">
-        <div style={styles.homeLandscapeSun} />
-        <div style={{ ...styles.homeLandscapeCloud, ...styles.homeLandscapeCloudLeft }} />
-        <div style={{ ...styles.homeLandscapeCloud, ...styles.homeLandscapeCloudRight }} />
-        <div style={{ ...styles.homeLandscapeMountain, ...styles.homeLandscapeMountainLeft }} />
-        <div style={{ ...styles.homeLandscapeMountain, ...styles.homeLandscapeMountainRight }} />
-      </div>
-
       <section style={styles.homeScreen} aria-label="Главная страница">
         <div style={styles.homeHeroCard}>
           <div style={styles.homeProfileRow}>
@@ -125,11 +117,6 @@ export default function MainMenuPage({
           </div>
 
           <div style={styles.heroArenaPreview}>
-            <div style={styles.heroSun} />
-            <div style={styles.heroCloud} />
-            <div style={styles.heroMountainLeft} />
-            <div style={styles.heroMountainRight} />
-            <div style={styles.heroGrass} />
             <div style={styles.heroCharacterWrap}>
               <div style={styles.heroIdleFloat}>
                 <HeroCharacter />
