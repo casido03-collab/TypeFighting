@@ -326,6 +326,24 @@ function getBattleSides(state, user) {
   };
 }
 
+function finishBattleByForfeit(state, user) {
+  const userId = String(user.id);
+  if (!state.participants[userId] || state.status === "finished") return state;
+
+  const opponentId = state.participantIds.find((id) => id !== userId);
+  if (!opponentId || !state.participants[opponentId]) {
+    state.status = "cancelled";
+    return state;
+  }
+
+  state.status = "finished";
+  state.winnerId = opponentId;
+  state.finishedReason = "forfeit";
+  state.participants[userId].hp = 0;
+  state.participants[opponentId].hp = Math.max(1, state.participants[opponentId].hp);
+  return state;
+}
+
 function serializeBattleState(state, user) {
   const sides = getBattleSides(state, user);
   return {
@@ -744,7 +762,7 @@ const server = http.createServer(async (req, res) => {
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
       const state = await getBattleState(battleId);
       if (state) {
-        state.status = "cancelled";
+        finishBattleByForfeit(state, user);
         await persistBattleState(state);
       }
 
