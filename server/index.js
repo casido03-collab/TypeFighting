@@ -292,6 +292,18 @@ function isAdminTelegramId(id) {
   return getAdminIds().has(String(id));
 }
 
+function isTelegramWebhookSecretValid(req) {
+  const expectedSecret = String(process.env.TELEGRAM_WEBHOOK_SECRET || "").trim();
+  if (!expectedSecret) return true;
+
+  const receivedSecret = String(req.headers["x-telegram-bot-api-secret-token"] || "").trim();
+  if (!receivedSecret) return false;
+
+  const expected = Buffer.from(expectedSecret);
+  const received = Buffer.from(receivedSecret);
+  return expected.length === received.length && crypto.timingSafeEqual(expected, received);
+}
+
 function formatPeriodStats(title, stats) {
   const events = stats.events || {};
   const battles = stats.battles || {};
@@ -395,6 +407,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/api/telegram/webhook") {
+      if (!isTelegramWebhookSecretValid(req)) {
+        sendJson(res, 401, { error: "invalid_telegram_webhook_secret" });
+        return;
+      }
+
       const body = JSON.parse((await readBody(req)) || "{}");
       const message = body.message || body.edited_message;
       const text = String(message?.text || "").trim();
