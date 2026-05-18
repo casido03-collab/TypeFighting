@@ -588,6 +588,102 @@ async function recordAnalyticsEvent(user, event) {
   return { accepted: true };
 }
 
+async function countScalar(sql, params = []) {
+  const result = await query(sql, params);
+  return Number(result.rows[0]?.value || 0);
+}
+
+function periodFilter(period) {
+  if (period === "today") return "created_at >= date_trunc('day', now())";
+  if (period === "yesterday") {
+    return "created_at >= date_trunc('day', now()) - interval '1 day' and created_at < date_trunc('day', now())";
+  }
+  return "created_at >= now() - interval '7 days'";
+}
+
+async function getEventCounts(period) {
+  const filter = periodFilter(period);
+  const result = await query(`
+    select event_name, count(*)::integer as value
+    from analytics_events
+    where ${filter}
+    group by event_name
+  `);
+
+  return Object.fromEntries(result.rows.map((row) => [row.event_name, Number(row.value || 0)]));
+}
+
+async function getBattleSummary(period) {
+  const filter = periodFilter(period);
+  const result = await query(`
+    select
+      count(*)::integer as battles,
+      count(*) filter (where mode = 'ai')::integer as ai_battles,
+      count(*) filter (where mode = 'friend')::integer as friend_battles,
+      count(*) filter (where mode = 'online')::integer as online_battles,
+      coalesce(round(avg(duration_ms) / 1000), 0)::integer as avg_seconds,
+      coalesce(round(avg(wpm)), 0)::integer as avg_wpm,
+      coalesce(max(wpm), 0)::integer as max_wpm,
+      coalesce(max(combo), 0)::integer as max_combo
+    from battle_results
+    where ${filter}
+  `);
+
+  return result.rows[0];
+}
+
+async function getTopInviters(period) {
+  const filter = periodFilter(period);
+  const result = await query(`
+    select
+      coalesce(p.display_name, 'Player') as name,
+      count(*)::integer as invited
+    from analytics_events e
+    left join players p on p.id = e.player_id
+    where e.event_name in ('ref_link_shared', 'ref_link_copied', 'ref_registered')
+      and ${filter.replaceAll("created_at", "e.created_at")}
+    group by p.display_name
+    order by invited desc
+    limit 5
+  `);
+
+  return result.rows.map((row) => `${row.name}: ${row.invited}`).join(", ") || "нет данных";
+}
+
+async function getAdminStats() {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const periods = ["today", "yesterday", "week"];
+  const byPeriod = {};
+
+  for (const period of periods) {
+    const events = await getEventCounts(period);
+    const battles = await getBattleSummary(period);
+    byPeriod[period] = {
+      newUsers: await countScalar(`select count(*)::integer as value from players where ${periodFilter(period)}`),
+      activeUsers: await countScalar(
+        `select count(distinct player_id)::integer as value from battle_results where ${periodFilter(period)} and player_id is not null`
+      ),
+      battles,
+      events,
+      topInviters: await getTopInviters(period),
+    };
+  }
+
+  return {
+    totals: {
+      players: await countScalar("select count(*)::integer as value from players"),
+      battleResults: await countScalar("select count(*)::integer as value from battle_results"),
+      activeBattles: await countScalar("select count(*)::integer as value from active_battles"),
+      waitingDuels: await countScalar("select count(*)::integer as value from duel_invites where status = 'waiting'"),
+      analyticsEvents: await countScalar("select count(*)::integer as value from analytics_events"),
+      zeroEnergyPlayers: await countScalar("select count(*)::integer as value from player_energy where value = 0"),
+    },
+    byPeriod,
+  };
+}
+
 async function recordBattleResult(user, result) {
   if (!hasDatabase()) return null;
   if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
@@ -783,6 +879,7 @@ module.exports = {
   getActiveBattle,
   getDuelInviteStatus,
   getLeaderboard,
+  getAdminStats,
   hasDatabase,
   initDb,
   joinDuelInvite,

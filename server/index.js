@@ -6,6 +6,7 @@ const {
   cleanupExpiredGameRows,
   createDuelInvite,
   getActiveBattle,
+  getAdminStats,
   getDuelInviteStatus,
   getLeaderboard,
   hasDatabase,
@@ -277,6 +278,62 @@ function getOptionalTelegramUser(req) {
   return verifyTelegramInitData(String(initData), botToken);
 }
 
+function getAdminIds() {
+  return new Set(
+    String(process.env.TELEGRAM_ADMIN_IDS || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+  );
+}
+
+function isAdminTelegramId(id) {
+  return getAdminIds().has(String(id));
+}
+
+function formatPeriodStats(title, stats) {
+  const events = stats.events || {};
+  const battles = stats.battles || {};
+  return [
+    `${title}`,
+    `users: +${stats.newUsers}, active ${stats.activeUsers}`,
+    `battles: ${battles.battles || 0} (AI ${battles.ai_battles || 0}, friend ${battles.friend_battles || 0}, online ${battles.online_battles || 0})`,
+    `avg: ${battles.avg_wpm || 0} WPM, ${battles.avg_seconds || 0}s, max ${battles.max_wpm || 0} WPM, combo ${battles.max_combo || 0}`,
+    `duels: created ${events.duel_created || 0}, copied ${events.duel_copied || 0}, shared ${events.duel_shared || 0}, opened ${events.duel_join_opened || 0}, joined ${events.duel_joined || 0}, expired ${events.duel_expired || 0}`,
+    `refs: created ${events.ref_link_created || 0}, copied ${events.ref_link_copied || 0}, shared ${events.ref_link_shared || 0}, opened ${events.ref_opened || 0}, registered ${events.ref_registered || 0}`,
+    `top inviters: ${stats.topInviters}`,
+  ].join("\n");
+}
+
+function formatAdminStats(stats) {
+  return [
+    "Type Fight stats",
+    `total: players ${stats.totals.players}, battles ${stats.totals.battleResults}, events ${stats.totals.analyticsEvents}`,
+    `live: active battles ${stats.totals.activeBattles}, waiting duels ${stats.totals.waitingDuels}, zero energy ${stats.totals.zeroEnergyPlayers}`,
+    "",
+    formatPeriodStats("Today", stats.byPeriod.today),
+    "",
+    formatPeriodStats("Yesterday", stats.byPeriod.yesterday),
+    "",
+    formatPeriodStats("Last 7 days", stats.byPeriod.week),
+  ].join("\n");
+}
+
+async function sendTelegramMessage(chatId, text) {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken) return;
+
+  await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text,
+      disable_web_page_preview: true,
+    }),
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -297,6 +354,28 @@ const server = http.createServer(async (req, res) => {
       const user = getTelegramUser(req, res);
       if (!user) return;
       sendJson(res, 200, await getPlayerSession(user));
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/api/telegram/webhook") {
+      const body = JSON.parse((await readBody(req)) || "{}");
+      const message = body.message || body.edited_message;
+      const text = String(message?.text || "").trim();
+      const fromId = message?.from?.id;
+      const chatId = message?.chat?.id;
+
+      if (text.startsWith("/stats") && chatId) {
+        if (!isAdminTelegramId(fromId)) {
+          await sendTelegramMessage(chatId, "Нет доступа к статистике.");
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+
+        const stats = await getAdminStats();
+        await sendTelegramMessage(chatId, stats ? formatAdminStats(stats) : "База статистики недоступна.");
+      }
+
+      sendJson(res, 200, { ok: true });
       return;
     }
 
