@@ -475,6 +475,42 @@ async function getActiveBattle(battleId) {
   return result.rows[0]?.state || null;
 }
 
+async function cleanupExpiredGameRows() {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const expiredDuels = await query(`
+    update duel_invites
+    set
+      status = 'expired',
+      updated_at = now()
+    where status = 'waiting'
+      and expires_at < now()
+    returning duel_id
+  `);
+
+  const deletedBattles = await query(`
+    delete from active_battles
+    where
+      (status in ('finished', 'cancelled') and updated_at < now() - interval '30 minutes')
+      or (status = 'active' and updated_at < now() - interval '2 hours')
+    returning battle_id
+  `);
+
+  const deletedDuels = await query(`
+    delete from duel_invites
+    where status in ('expired', 'joined')
+      and updated_at < now() - interval '1 day'
+    returning duel_id
+  `);
+
+  return {
+    expiredDuels: expiredDuels.rows.length,
+    deletedBattles: deletedBattles.rows.length,
+    deletedDuels: deletedDuels.rows.length,
+  };
+}
+
 async function recordBattleResult(user, result) {
   if (!hasDatabase()) return null;
   if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
@@ -665,6 +701,7 @@ async function getLeaderboard(period, user = null) {
 }
 
 module.exports = {
+  cleanupExpiredGameRows,
   createDuelInvite,
   getActiveBattle,
   getDuelInviteStatus,

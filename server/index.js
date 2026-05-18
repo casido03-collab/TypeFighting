@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const {
+  cleanupExpiredGameRows,
   createDuelInvite,
   getActiveBattle,
   getDuelInviteStatus,
@@ -17,6 +18,7 @@ const {
 
 const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
+const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -534,6 +536,16 @@ initDb()
     console.error("Database init failed:", error);
   })
   .finally(() => {
+    cleanupExpiredGameRows().catch((error) => {
+      console.error("Initial cleanup failed:", error);
+    });
+
+    setInterval(() => {
+      cleanupExpiredGameRows().catch((error) => {
+        console.error("Scheduled cleanup failed:", error);
+      });
+    }, CLEANUP_INTERVAL_MS).unref();
+
     server.listen(PORT, "127.0.0.1", () => {
       console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
     });
