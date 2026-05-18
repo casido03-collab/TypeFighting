@@ -94,6 +94,7 @@ export default function App() {
   const messageTimer = useRef<number | null>(null);
   const duelCopiedTimer = useRef<number | null>(null);
   const duelPollTimer = useRef<number | null>(null);
+  const isReturningToMenu = useRef(false);
 
   useEffect(() => {
     const cleanupTelegram = telegram.init();
@@ -132,7 +133,7 @@ export default function App() {
 
     return telegram.showBackButton(() => {
       if (screen === "battle") {
-        returnToMenu();
+        void returnToMenu();
         return;
       }
 
@@ -326,10 +327,66 @@ export default function App() {
     setScreen("battle");
   }
 
-  function returnToMenu() {
+  function blurActiveElement() {
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur();
+    }
+  }
+
+  function waitForBattleViewportRelease() {
+    return new Promise<void>((resolve) => {
+      const visualViewport = window.visualViewport;
+      let settled = false;
+      const startedAt = Date.now();
+      const startHeight = visualViewport?.height || window.innerHeight;
+      let lastHeight = startHeight;
+
+      function finish() {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        visualViewport?.removeEventListener("resize", handleResize);
+        telegram.refreshViewport();
+        resolve();
+      }
+
+      function handleResize() {
+        const nextHeight = visualViewport?.height || window.innerHeight;
+        const heightRestored = nextHeight > startHeight + 70;
+        const heightStable = Math.abs(nextHeight - lastHeight) < 2 && Date.now() - startedAt > 420;
+
+        lastHeight = nextHeight;
+        if (heightRestored || heightStable) {
+          window.setTimeout(finish, 120);
+        }
+      }
+
+      const timeout = window.setTimeout(finish, 620);
+      visualViewport?.addEventListener("resize", handleResize);
+      window.setTimeout(handleResize, 280);
+    });
+  }
+
+  async function returnToMenu() {
+    if (isReturningToMenu.current) return;
+
+    isReturningToMenu.current = true;
     telegram.impact("light");
+    blurActiveElement();
+    document.documentElement.classList.remove("tk-battle-active");
+    telegram.refreshViewport();
+
+    if (screen === "battle") {
+      await waitForBattleViewportRelease();
+    }
+
     setActiveBattleId(null);
     setScreen("menu");
+    window.setTimeout(() => {
+      isReturningToMenu.current = false;
+      telegram.refreshViewport();
+    }, 80);
   }
 
   function showSearchMessage(message: string, timeoutMs = 2000) {
