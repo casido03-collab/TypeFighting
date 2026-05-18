@@ -4,6 +4,8 @@ const ENERGY_MAX = 50;
 const BATTLE_MODES = new Set(["ai", "online", "friend"]);
 const BATTLE_OUTCOMES = new Set(["win", "loss"]);
 const ENERGY_SPENDING_MODES = new Set(["online", "friend"]);
+const ANALYTICS_DEDUP_SECONDS = 30;
+const ANALYTICS_PLAYER_HOURLY_LIMIT = 240;
 
 let pool = null;
 let initPromise = null;
@@ -154,6 +156,9 @@ async function initDb() {
     await query("create index if not exists idx_active_battles_status on active_battles(status)");
     await query("create index if not exists idx_analytics_events_created_at on analytics_events(created_at desc)");
     await query("create index if not exists idx_analytics_events_name on analytics_events(event_name)");
+    await query(
+      "create index if not exists idx_analytics_events_player_name_created on analytics_events(player_id, event_name, created_at desc)"
+    );
     await query("create index if not exists idx_player_referrals_inviter on player_referrals(inviter_id)");
     await query("create index if not exists idx_player_referrals_created_at on player_referrals(created_at desc)");
 
@@ -576,6 +581,42 @@ async function recordAnalyticsEvent(user, event) {
     event.metadata && typeof event.metadata === "object" && !Array.isArray(event.metadata)
       ? event.metadata
       : {};
+
+  if (playerRow?.id) {
+    const hourlyLimitResult = await query(
+      `
+        select count(*)::integer as value
+        from analytics_events
+        where player_id = $1
+          and event_source = $2
+          and created_at >= now() - interval '1 hour'
+      `,
+      [playerRow.id, eventSource]
+    );
+
+    if (Number(hourlyLimitResult.rows[0]?.value || 0) >= ANALYTICS_PLAYER_HOURLY_LIMIT) {
+      return { accepted: false, limited: true };
+    }
+
+    const duplicateResult = await query(
+      `
+        select id
+        from analytics_events
+        where player_id = $1
+          and event_name = $2
+          and event_source = $3
+          and coalesce(duel_id, '') = coalesce($4, '')
+          and coalesce(ref_code, '') = coalesce($5, '')
+          and created_at >= now() - ($6::text || ' seconds')::interval
+        limit 1
+      `,
+      [playerRow.id, eventName, eventSource, duelId, refCode, ANALYTICS_DEDUP_SECONDS]
+    );
+
+    if (duplicateResult.rows.length > 0) {
+      return { accepted: true, duplicate: true };
+    }
+  }
 
   await query(
     `
