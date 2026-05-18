@@ -25,6 +25,7 @@ type TelegramWebApp = {
     user?: TelegramWebAppUser;
     start_param?: string;
   };
+  platform?: string;
   colorScheme?: "light" | "dark";
   themeParams?: TelegramThemeParams;
   viewportHeight?: number;
@@ -111,6 +112,10 @@ export const telegram = {
 
   get startParam() {
     return getWebApp()?.initDataUnsafe?.start_param || getUrlStartParam();
+  },
+
+  get platform() {
+    return getWebApp()?.platform || "";
   },
 
   init() {

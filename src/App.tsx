@@ -31,6 +31,44 @@ export type BattleMode = "ai" | "online" | "friend";
 export type Language = StoredLanguage;
 type SyncStatus = "local" | "syncing" | "synced" | "offline";
 
+function isLocalDevelopmentHost() {
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+function isMobileLikeBrowser() {
+  const userAgent = navigator.userAgent || "";
+  const hasMobileUserAgent = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+  const hasTouch = navigator.maxTouchPoints > 0;
+  const narrowScreen = Math.min(window.screen.width, window.screen.height) <= 820;
+
+  return hasMobileUserAgent || (hasTouch && narrowScreen);
+}
+
+function shouldBlockDesktopClient() {
+  if (isLocalDevelopmentHost()) return false;
+
+  const platform = telegram.platform.toLowerCase();
+  if (platform) {
+    return !["android", "android_x", "ios"].includes(platform);
+  }
+
+  return !isMobileLikeBrowser();
+}
+
+function DesktopBlockedView() {
+  return (
+    <div style={styles.desktopBlocker}>
+      <div style={styles.desktopBlockerCard}>
+        <div style={styles.desktopBlockerIcon}>📱</div>
+        <div style={styles.desktopBlockerTitle}>Открой с телефона</div>
+        <div style={styles.desktopBlockerText}>
+          Type Fight работает как мобильная Telegram Mini App. Открой приложение в Telegram на телефоне, чтобы играть без ошибок с клавиатурой и экраном боя.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [screen, setScreen] = useState<Screen>("menu");
   const [battleMode, setBattleMode] = useState<BattleMode>("ai");
@@ -46,6 +84,7 @@ export default function App() {
   const [leaders, setLeaders] = useState<LeaderboardEntry[]>(LEADERS);
   const [energy, setEnergy] = useState(() => loadEnergy(ENERGY_MAX).value);
   const [settings, setSettings] = useState(loadSettings);
+  const [isDesktopBlocked, setIsDesktopBlocked] = useState(() => shouldBlockDesktopClient());
   const [syncStatus, setSyncStatus] = useState<SyncStatus>(() =>
     api.isConfigured ? "syncing" : "local"
   );
@@ -58,9 +97,14 @@ export default function App() {
 
   useEffect(() => {
     const cleanupTelegram = telegram.init();
-    setPlayer(createPlayerProfile(telegram.user));
-    void syncSession();
-    void handleStartAppParam(telegram.startParam);
+    const desktopBlocked = shouldBlockDesktopClient();
+    setIsDesktopBlocked(desktopBlocked);
+
+    if (!desktopBlocked) {
+      setPlayer(createPlayerProfile(telegram.user));
+      void syncSession();
+      void handleStartAppParam(telegram.startParam);
+    }
 
     return () => {
       cleanupTelegram();
@@ -452,7 +496,9 @@ export default function App() {
       <section className="tk-phone" style={styles.phone} aria-label="Type Fight">
         <Background />
 
-        {screen === "menu" && (
+        {isDesktopBlocked && <DesktopBlockedView />}
+
+        {!isDesktopBlocked && screen === "menu" && (
           <MainMenuPage
             onStart={findOpponent}
             onStartAi={() => startBattle("ai")}
@@ -477,7 +523,7 @@ export default function App() {
           />
         )}
 
-        {screen === "battle" && (
+        {!isDesktopBlocked && screen === "battle" && (
           <BattlePage
             mode={battleMode}
             words={WORDS}
@@ -488,7 +534,7 @@ export default function App() {
           />
         )}
 
-        {screen === "rating" && (
+        {!isDesktopBlocked && screen === "rating" && (
           <RatingPage
             leaders={leaders}
             player={player}
@@ -499,7 +545,7 @@ export default function App() {
           />
         )}
 
-        {screen === "profile" && (
+        {!isDesktopBlocked && screen === "profile" && (
           <ProfilePage
             onHome={() => setScreen("menu")}
             onRating={() => setScreen("rating")}
