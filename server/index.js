@@ -25,6 +25,7 @@ const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 const MIN_SERVER_WORD_MS_PER_LETTER = 80;
+const ADMIN_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -55,6 +56,7 @@ const LEADERS = [
 const SERVER_WORDS = ["арена", "рывок", "пламя", "фокус", "мечта", "удар", "щит", "раунд", "искра", "темп"];
 const activeBattles = new Map();
 const matchmakingQueue = new Map();
+const adminAlertCooldowns = new Map();
 
 function sendJson(res, status, body) {
   res.writeHead(status, {
@@ -72,6 +74,27 @@ function logSystemEvent(req, event) {
   }).catch((error) => {
     console.error("Failed to record system event:", error);
   });
+}
+
+function shouldSendAdminAlert(eventName) {
+  if (process.env.TELEGRAM_ALERTS_ENABLED === "false") return false;
+
+  const now = Date.now();
+  const lastSentAt = adminAlertCooldowns.get(eventName) || 0;
+  if (now - lastSentAt < ADMIN_ALERT_COOLDOWN_MS) return false;
+
+  adminAlertCooldowns.set(eventName, now);
+  return true;
+}
+
+function sendAdminAlert(eventName, text) {
+  if (!shouldSendAdminAlert(eventName)) return;
+
+  for (const adminId of getAdminIds()) {
+    void sendTelegramMessage(adminId, text).catch((error) => {
+      console.error("Failed to send admin alert:", error);
+    });
+  }
 }
 
 function readBody(req) {
@@ -547,6 +570,10 @@ const server = http.createServer(async (req, res) => {
           statusCode: 401,
           message: "Invalid Telegram webhook secret header",
         });
+        sendAdminAlert(
+          "telegram_webhook_secret_invalid",
+          "Type Fight alert\nWebhook получил запрос с неверным secret token."
+        );
         sendJson(res, 401, { error: "invalid_telegram_webhook_secret" });
         return;
       }
@@ -843,6 +870,10 @@ const server = http.createServer(async (req, res) => {
       message: error.message || "server_error",
       metadata: { pathname },
     });
+    sendAdminAlert(
+      "api_server_error",
+      `Type Fight alert\nAPI ошибка 500\nPath: ${pathname}\nMessage: ${error.message || "server_error"}`
+    );
     sendJson(res, 500, { error: error.message || "server_error" });
   }
 });
