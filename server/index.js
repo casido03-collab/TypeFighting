@@ -26,6 +26,7 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 const MIN_SERVER_WORD_MS_PER_LETTER = 80;
 const ADMIN_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const DEFAULT_TELEGRAM_APP_URL = "https://typefight.shop";
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -85,6 +86,14 @@ function shouldSendAdminAlert(eventName) {
 
   adminAlertCooldowns.set(eventName, now);
   return true;
+}
+
+function getPublicAppUrl() {
+  return String(process.env.TELEGRAM_APP_URL || process.env.PUBLIC_APP_URL || DEFAULT_TELEGRAM_APP_URL).trim();
+}
+
+function getVpnReferralUrl() {
+  return String(process.env.TELEGRAM_VPN_URL || DEFAULT_TELEGRAM_APP_URL).trim();
 }
 
 function sendAdminAlert(eventName, text) {
@@ -517,7 +526,7 @@ function formatAdminStats(stats) {
   ].join("\n");
 }
 
-async function sendTelegramMessage(chatId, text) {
+async function sendTelegramMessage(chatId, text, extra = {}) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
   if (!botToken) return;
 
@@ -532,12 +541,42 @@ async function sendTelegramMessage(chatId, text) {
         chat_id: chatId,
         text,
         disable_web_page_preview: true,
+        ...extra,
       }),
       signal: controller.signal,
     });
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function getStartMessage() {
+  return [
+    "⚔️ Добро пожаловать в Type Fight — онлайн-дуэли на скорость печати прямо в Telegram.",
+    "Побеждает тот, кто быстрее печатает слова и наносит удары сопернику.",
+    "",
+    "🌐 Для стабильной работы игры включи VPN перед запуском.",
+    "После подключения нажми кнопку ниже и заходи в бой.",
+  ].join("\n");
+}
+
+function getStartKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "⚔️ Играть",
+          web_app: { url: getPublicAppUrl() },
+        },
+      ],
+      [
+        {
+          text: "💻 Подключить VPN",
+          url: getVpnReferralUrl(),
+        },
+      ],
+    ],
+  };
 }
 
 const server = http.createServer(async (req, res) => {
@@ -583,6 +622,21 @@ const server = http.createServer(async (req, res) => {
       const text = String(message?.text || "").trim();
       const fromId = message?.from?.id;
       const chatId = message?.chat?.id;
+
+      if (text.startsWith("/start") && chatId) {
+        void sendTelegramMessage(chatId, getStartMessage(), {
+          reply_markup: getStartKeyboard(),
+        }).catch((error) => {
+          console.error("Failed to send Telegram start message:", error);
+          logSystemEvent(req, {
+            eventName: "telegram_send_failed",
+            message: error.message || "Failed to send start message",
+            metadata: { chatId, command: "start" },
+          });
+        });
+        sendJson(res, 200, { ok: true });
+        return;
+      }
 
       if (text.startsWith("/stats") && chatId) {
         if (!isAdminTelegramId(fromId)) {
