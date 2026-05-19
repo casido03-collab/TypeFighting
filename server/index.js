@@ -21,14 +21,36 @@ const {
 } = require("./db");
 
 const PORT = Number(process.env.PORT || 3001);
-const MAX_INIT_DATA_AGE_SECONDS = 24 * 60 * 60;
+const MAX_INIT_DATA_AGE_SECONDS = 3 * 60 * 60;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 const MIN_SERVER_WORD_MS_PER_LETTER = 80;
 const ADMIN_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
 const TELEGRAM_POLLING_RETRY_MS = 5000;
+const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+const MAX_AI_BATTLE_WPM = 260;
+const MAX_AI_BATTLE_WORDS_PER_MINUTE = 75;
 const DEFAULT_TELEGRAM_APP_URL = "https://typefight.shop";
 const DEFAULT_TELEGRAM_VPN_URL = "https://t.me/ScroogeVPNRobot?start=partner_2102945039";
+const ALLOWED_ORIGINS = new Set([
+  "https://typefight.shop",
+  "https://www.typefight.shop",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+]);
+const ANALYTICS_EVENT_NAMES = new Set([
+  "duel_created",
+  "duel_copied",
+  "duel_shared",
+  "duel_join_opened",
+  "ref_opened",
+  "ref_link_created",
+  "ref_link_copied",
+  "ref_link_shared",
+]);
+const rateLimitBuckets = new Map();
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, "..", ".env");
@@ -65,6 +87,9 @@ function sendJson(res, status, body) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
   });
   res.end(JSON.stringify(body));
 }
@@ -113,7 +138,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 1024 * 1024) {
+      if (body.length > MAX_REQUEST_BODY_BYTES) {
         reject(new Error("request_body_too_large"));
         req.destroy();
       }
@@ -121,6 +146,68 @@ function readBody(req) {
     req.on("end", () => resolve(body));
     req.on("error", reject);
   });
+}
+
+function getRequestIp(req) {
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwarded || req.socket.remoteAddress || "unknown";
+}
+
+function getRateLimitKey(req, scope, user = null) {
+  const userKey = user?.id ? `tg:${user.id}` : `ip:${getRequestIp(req)}`;
+  return `${scope}:${userKey}`;
+}
+
+function isRateLimited(req, res, scope, options = {}, user = null) {
+  const now = Date.now();
+  const windowMs = options.windowMs || 60 * 1000;
+  const limit = options.limit || 60;
+  const key = getRateLimitKey(req, scope, user);
+  const bucket = rateLimitBuckets.get(key);
+
+  if (!bucket || bucket.resetAt <= now) {
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+
+  bucket.count += 1;
+  if (bucket.count <= limit) return false;
+
+  logSystemEvent(req, {
+    eventName: "api_rate_limited",
+    statusCode: 429,
+    message: `Rate limit exceeded: ${scope}`,
+    metadata: { scope, key },
+  });
+  sendJson(res, 429, { error: "rate_limited" });
+  return true;
+}
+
+function cleanupRateLimits() {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets.entries()) {
+    if (bucket.resetAt <= now) rateLimitBuckets.delete(key);
+  }
+}
+
+function isAllowedOrigin(req) {
+  const origin = String(req.headers.origin || "").trim();
+  if (!origin) return true;
+  return ALLOWED_ORIGINS.has(origin);
+}
+
+function enforceAllowedOrigin(req, res, pathname) {
+  if (pathname === "/api/telegram/webhook") return true;
+  if (isAllowedOrigin(req)) return true;
+
+  logSystemEvent(req, {
+    eventName: "api_origin_blocked",
+    statusCode: 403,
+    message: "Blocked request origin",
+    metadata: { origin: req.headers.origin || null, pathname },
+  });
+  sendJson(res, 403, { error: "origin_not_allowed" });
+  return false;
 }
 
 function verifyTelegramInitData(initData, botToken) {
@@ -207,11 +294,11 @@ async function getPlayerSession(user) {
 }
 
 function createDuelId() {
-  return `duel_${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+  return `duel_${crypto.randomBytes(12).toString("base64url").toUpperCase()}`;
 }
 
 function createBattleId() {
-  return `battle_${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+  return `battle_${crypto.randomBytes(12).toString("base64url").toUpperCase()}`;
 }
 
 function displayNameFromUser(user) {
@@ -359,6 +446,23 @@ function getBattleSides(state, user) {
     player: state.participants[playerId],
     opponent: state.participants[opponentId],
   };
+}
+
+function isBattleParticipant(state, user) {
+  return Boolean(state?.participants?.[String(user?.id)]);
+}
+
+function requireBattleParticipant(req, res, state, user) {
+  if (isBattleParticipant(state, user)) return true;
+
+  logSystemEvent(req, {
+    eventName: "battle_participant_invalid",
+    statusCode: 403,
+    message: "User tried to access a battle without being a participant",
+    metadata: { battleId: state?.battleId || null, telegramId: user?.id || null },
+  });
+  sendJson(res, 403, { error: "battle_participant_invalid" });
+  return false;
 }
 
 function finishBattleByForfeit(state, user) {
@@ -651,6 +755,66 @@ function isTelegramPollingEnabled() {
   return process.env.TELEGRAM_POLLING_ENABLED !== "false";
 }
 
+function validateAnalyticsEventName(req, res, eventName) {
+  if (ANALYTICS_EVENT_NAMES.has(String(eventName || ""))) return true;
+
+  logSystemEvent(req, {
+    eventName: "analytics_event_rejected",
+    statusCode: 400,
+    message: "Rejected unknown analytics event",
+    metadata: { eventName },
+  });
+  sendJson(res, 400, { error: "invalid_analytics_event" });
+  return false;
+}
+
+function validateBattleResultPayload(req, res, result) {
+  const mode = String(result?.mode || "");
+  const durationMs = Number(result?.durationMs || 0);
+  const wordsCompleted = Number(result?.wordsCompleted || 0);
+  const combo = Number(result?.combo || 0);
+
+  if (!["ai", "online", "friend"].includes(mode)) {
+    sendJson(res, 400, { error: "invalid_battle_mode" });
+    return false;
+  }
+
+  if (!Number.isFinite(durationMs) || durationMs < 1000 || durationMs > 60 * 60 * 1000) {
+    sendJson(res, 400, { error: "invalid_battle_duration" });
+    return false;
+  }
+
+  if (!Number.isFinite(wordsCompleted) || wordsCompleted < 0 || wordsCompleted > 1000) {
+    sendJson(res, 400, { error: "invalid_words_completed" });
+    return false;
+  }
+
+  if (!Number.isFinite(combo) || combo < 0 || combo > 1000) {
+    sendJson(res, 400, { error: "invalid_combo" });
+    return false;
+  }
+
+  if (mode === "ai" && wordsCompleted > 0) {
+    const minutes = durationMs / 60000;
+    const wordsPerMinute = wordsCompleted / minutes;
+    const wpm = Math.round(wordsCompleted / minutes);
+    const suspicious = wordsPerMinute > MAX_AI_BATTLE_WORDS_PER_MINUTE || wpm > MAX_AI_BATTLE_WPM;
+
+    if (suspicious) {
+      logSystemEvent(req, {
+        eventName: "battle_result_rejected",
+        statusCode: 400,
+        message: "Rejected suspicious AI battle result",
+        metadata: { mode, durationMs, wordsCompleted, combo, wordsPerMinute, wpm },
+      });
+      sendJson(res, 400, { error: "suspicious_battle_result" });
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function wait(ms) {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
@@ -704,6 +868,14 @@ const server = http.createServer(async (req, res) => {
   const pathname = url.pathname.replace(/\/$/, "") || "/";
 
   try {
+    if (pathname.startsWith("/api/") && !enforceAllowedOrigin(req, res, pathname)) {
+      return;
+    }
+
+    if (pathname.startsWith("/api/") && isRateLimited(req, res, "api", { limit: 180, windowMs: 60 * 1000 })) {
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/api/health") {
       sendJson(res, 200, {
         ok: true,
@@ -718,11 +890,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/telegram/session") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "session", { limit: 30, windowMs: 60 * 1000 }, user)) return;
+
       sendJson(res, 200, await getPlayerSession(user));
       return;
     }
 
     if (req.method === "POST" && pathname === "/api/telegram/webhook") {
+      if (isRateLimited(req, res, "telegram_webhook", { limit: 300, windowMs: 60 * 1000 })) return;
+
       if (!isTelegramWebhookSecretValid(req)) {
         logSystemEvent(req, {
           eventName: "telegram_webhook_secret_invalid",
@@ -792,6 +968,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && pathname === "/api/player") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "player", { limit: 90, windowMs: 60 * 1000 }, user)) return;
+
       const session = await getPlayerSession(user);
       sendJson(res, 200, {
         player: session.player,
@@ -819,6 +997,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/duels") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "duels_create", { limit: 12, windowMs: 60 * 1000 }, user)) return;
 
       const duelId = createDuelId();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
@@ -830,6 +1009,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && /^\/api\/duels\/[^/]+\/join$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "duels_join", { limit: 20, windowMs: 60 * 1000 }, user)) return;
 
       const duelId = decodeURIComponent(pathname.split("/")[3] || "");
       const joined = await joinDuelInvite(user, duelId, createBattleId());
@@ -844,6 +1024,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && /^\/api\/duels\/[^/]+$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "duels_status", { limit: 80, windowMs: 60 * 1000 }, user)) return;
 
       const duelId = decodeURIComponent(pathname.split("/")[3] || "");
       const status = await getDuelInviteStatus(user, duelId);
@@ -858,6 +1039,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && /^\/api\/battles\/[^/]+$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "battle_state", { limit: 180, windowMs: 60 * 1000 }, user)) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
       const state = await getBattleState(battleId);
@@ -865,6 +1047,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
       }
+      if (!requireBattleParticipant(req, res, state, user)) return;
 
       sendJson(res, 200, serializeBattleState(state, user));
       return;
@@ -873,6 +1056,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && /^\/api\/battles\/[^/]+\/typing$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "battle_typing", { limit: 120, windowMs: 60 * 1000 }, user)) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
       const state = await getBattleState(battleId);
@@ -880,10 +1064,12 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
       }
+      if (!requireBattleParticipant(req, res, state, user)) return;
 
       const body = JSON.parse((await readBody(req)) || "{}");
       const { player } = getBattleSides(state, user);
-      player.typedCount = Math.max(0, Math.min(player.word.length, Number(body.typedCount) || 0));
+      const nextTypedCount = Math.max(0, Math.min(player.word.length, Number(body.typedCount) || 0));
+      player.typedCount = Math.max(Number(player.typedCount || 0), nextTypedCount);
       await persistBattleState(state);
       sendJson(res, 200, { accepted: true, state: serializeBattleState(state, user) });
       return;
@@ -892,6 +1078,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && /^\/api\/battles\/[^/]+\/words$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "battle_words", { limit: 80, windowMs: 60 * 1000 }, user)) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
       const state = await getBattleState(battleId);
@@ -899,6 +1086,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 404, { error: "battle_not_found" });
         return;
       }
+      if (!requireBattleParticipant(req, res, state, user)) return;
 
       const body = JSON.parse((await readBody(req)) || "{}");
       if (state.status === "finished") {
@@ -974,10 +1162,12 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && /^\/api\/battles\/[^/]+\/leave$/.test(pathname)) {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "battle_leave", { limit: 30, windowMs: 60 * 1000 }, user)) return;
 
       const battleId = decodeURIComponent(pathname.split("/")[3] || "");
       const state = await getBattleState(battleId);
       if (state) {
+        if (!requireBattleParticipant(req, res, state, user)) return;
         finishBattleByForfeit(state, user);
         await persistBattleState(state);
       }
@@ -989,6 +1179,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/referrals") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "referrals", { limit: 12, windowMs: 60 * 1000 }, user)) return;
 
       const body = JSON.parse((await readBody(req)) || "{}");
       sendJson(res, 200, await applyReferral(user, body.referralCode));
@@ -997,7 +1188,10 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/api/analytics/events") {
       const user = getOptionalTelegramUser(req);
+      if (isRateLimited(req, res, "analytics", { limit: 60, windowMs: 60 * 1000 }, user)) return;
       const body = JSON.parse((await readBody(req)) || "{}");
+      if (!validateAnalyticsEventName(req, res, body.eventName)) return;
+
       const result = await recordAnalyticsEvent(user, body);
       sendJson(res, 200, result || { accepted: false });
       return;
@@ -1006,6 +1200,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/matchmaking") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "matchmaking", { limit: 8, windowMs: 60 * 1000 }, user)) return;
 
       const result = await runMatchmaking(user);
       sendJson(res, 200, result);
@@ -1015,8 +1210,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/api/battles") {
       const user = getTelegramUser(req, res);
       if (!user) return;
+      if (isRateLimited(req, res, "battle_result", { limit: 30, windowMs: 60 * 1000 }, user)) return;
 
       const body = JSON.parse((await readBody(req)) || "{}");
+      if (!validateBattleResultPayload(req, res, body)) return;
+
       const storedState = await recordBattleResult(user, body);
       if (!storedState) {
         sendJson(res, 200, {
@@ -1067,6 +1265,8 @@ initDb()
         console.error("Scheduled cleanup failed:", error);
       });
     }, CLEANUP_INTERVAL_MS).unref();
+
+    setInterval(cleanupRateLimits, 5 * 60 * 1000).unref();
 
     server.listen(PORT, "127.0.0.1", () => {
       console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
