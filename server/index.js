@@ -26,6 +26,7 @@ const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 const MATCHMAKING_TIMEOUT_MS = 20 * 1000;
 const MIN_SERVER_WORD_MS_PER_LETTER = 80;
 const ADMIN_ALERT_COOLDOWN_MS = 10 * 60 * 1000;
+const TELEGRAM_POLLING_RETRY_MS = 5000;
 const DEFAULT_TELEGRAM_APP_URL = "https://typefight.shop";
 const DEFAULT_TELEGRAM_VPN_URL = "https://t.me/ScroogeVPNRobot?start=partner_2102945039";
 
@@ -587,6 +588,117 @@ function getStartKeyboard() {
   };
 }
 
+async function handleTelegramBotMessage(message, req = null) {
+  const text = String(message?.text || "").trim();
+  const fromId = message?.from?.id;
+  const chatId = message?.chat?.id;
+
+  if (!text || !chatId) return false;
+
+  if (text.startsWith("/start")) {
+    try {
+      await sendTelegramMessage(chatId, getStartMessage(), {
+        reply_markup: getStartKeyboard(),
+      });
+    } catch (error) {
+      console.error("Failed to send Telegram start message:", error);
+      logSystemEvent(req, {
+        eventName: "telegram_send_failed",
+        message: error.message || "Failed to send start message",
+        metadata: { chatId, command: "start" },
+      });
+    }
+
+    return true;
+  }
+
+  if (text.startsWith("/stats")) {
+    if (!isAdminTelegramId(fromId)) {
+      try {
+        await sendTelegramMessage(chatId, "РќРµС‚ РґРѕСЃС‚СѓРїР° Рє СЃС‚Р°С‚РёСЃС‚РёРєРµ.");
+      } catch (error) {
+        console.error("Failed to send Telegram access denied message:", error);
+        logSystemEvent(req, {
+          eventName: "telegram_send_failed",
+          message: error.message || "Failed to send access denied message",
+          metadata: { chatId, command: "stats_denied" },
+        });
+      }
+
+      return true;
+    }
+
+    try {
+      const stats = await getAdminStats();
+      const textMessage = stats ? formatAdminStats(stats) : "Р‘Р°Р·Р° СЃС‚Р°С‚РёСЃС‚РёРєРё РЅРµРґРѕСЃС‚СѓРїРЅР°.";
+      await sendTelegramMessage(chatId, textMessage);
+    } catch (error) {
+      console.error("Failed to send Telegram stats message:", error);
+      logSystemEvent(req, {
+        eventName: "telegram_send_failed",
+        message: error.message || "Failed to send stats message",
+        metadata: { chatId, command: "stats" },
+      });
+    }
+
+    return true;
+  }
+
+  return false;
+}
+
+function isTelegramPollingEnabled() {
+  return process.env.TELEGRAM_POLLING_ENABLED !== "false";
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    timer.unref?.();
+  });
+}
+
+async function startTelegramPolling() {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+  if (!botToken || !isTelegramPollingEnabled()) return;
+
+  let offset = 0;
+  let conflictLogged = false;
+
+  while (true) {
+    try {
+      const response = await fetch(
+        `https://api.telegram.org/bot${botToken}/getUpdates?timeout=25&offset=${offset}&allowed_updates=${encodeURIComponent(
+          JSON.stringify(["message", "edited_message"])
+        )}`
+      );
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok || result?.ok === false) {
+        if (response.status === 409) {
+          if (!conflictLogged) {
+            conflictLogged = true;
+            console.warn("Telegram polling waits for webhook deletion.");
+          }
+          await wait(TELEGRAM_POLLING_RETRY_MS);
+          continue;
+        }
+
+        throw new Error(result?.description || `Telegram getUpdates failed with ${response.status}`);
+      }
+
+      conflictLogged = false;
+      for (const update of result.result || []) {
+        offset = Math.max(offset, Number(update.update_id || 0) + 1);
+        await handleTelegramBotMessage(update.message || update.edited_message);
+      }
+    } catch (error) {
+      console.error("Telegram polling failed:", error);
+      await wait(TELEGRAM_POLLING_RETRY_MS);
+    }
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", "http://127.0.0.1");
   const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -958,5 +1070,6 @@ initDb()
 
     server.listen(PORT, "127.0.0.1", () => {
       console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
+      void startTelegramPolling();
     });
   });
