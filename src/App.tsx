@@ -30,6 +30,27 @@ export type Screen = "menu" | "battle" | "rating" | "profile";
 export type BattleMode = "ai" | "online" | "friend";
 export type Language = StoredLanguage;
 type SyncStatus = "local" | "syncing" | "synced" | "offline";
+const PENDING_DUEL_STORAGE_KEY = "typefight.pendingDuelId";
+
+function loadPendingDuelId() {
+  try {
+    return localStorage.getItem(PENDING_DUEL_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function savePendingDuelId(duelId: string) {
+  try {
+    if (duelId) {
+      localStorage.setItem(PENDING_DUEL_STORAGE_KEY, duelId);
+    } else {
+      localStorage.removeItem(PENDING_DUEL_STORAGE_KEY);
+    }
+  } catch {
+    // Storage can be unavailable in some embedded browser modes.
+  }
+}
 
 function isLocalDevelopmentHost() {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
@@ -77,7 +98,7 @@ export default function App() {
   const [searchMessage, setSearchMessage] = useState("");
   const [duelInviteOpen, setDuelInviteOpen] = useState(false);
   const [duelLink, setDuelLink] = useState("");
-  const [pendingDuelId, setPendingDuelId] = useState("");
+  const [pendingDuelId, setPendingDuelId] = useState(loadPendingDuelId);
   const [duelCopied, setDuelCopied] = useState(false);
   const [activeBattleId, setActiveBattleId] = useState<string | null>(null);
   const [player, setPlayer] = useState<PlayerProfile>(() => createPlayerProfile(telegram.user));
@@ -123,6 +144,10 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    savePendingDuelId(pendingDuelId);
+  }, [pendingDuelId]);
 
   useEffect(() => {
     void loadLeaderboard(ratingPeriod);
@@ -588,7 +613,6 @@ export default function App() {
             syncMessage={syncMessage}
             onCopyDuelLink={copyDuelLink}
             onCloseDuelInvite={() => {
-              setPendingDuelId("");
               setDuelInviteOpen(false);
             }}
           />
