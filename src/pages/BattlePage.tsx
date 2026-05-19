@@ -655,7 +655,11 @@ export default function BattlePage({
       const nextEnemyHp = result.state?.opponent.hp ?? previousEnemyHp;
       if (nextEnemyHp < previousEnemyHp || result.outcome === "hit" || result.outcome === "finished") {
         setAction("playerAttack");
-        resetDelayed(ATTACK_MS);
+        if (resetTimer.current) window.clearTimeout(resetTimer.current);
+        resetTimer.current = window.setTimeout(() => {
+          setAction("enemyFall");
+          resetDelayed();
+        }, ATTACK_MS);
       }
     } catch {
       setServerError("Слово не отправлено. Попробуй еще раз.");

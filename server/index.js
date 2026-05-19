@@ -136,6 +136,25 @@ function getVpnReferralUrl() {
   return String(process.env.TELEGRAM_VPN_URL || DEFAULT_TELEGRAM_VPN_URL).trim();
 }
 
+function getTelegramBotUsername() {
+  return String(process.env.VITE_TELEGRAM_BOT_USERNAME || process.env.TELEGRAM_BOT_USERNAME || "TypeFight_bot")
+    .replace(/^@/, "")
+    .trim();
+}
+
+function getTelegramAppShortName() {
+  return String(process.env.VITE_TELEGRAM_APP_SHORT_NAME || process.env.TELEGRAM_APP_SHORT_NAME || "app").trim();
+}
+
+function getTelegramMiniAppStartUrl(startParam = "") {
+  const botUsername = getTelegramBotUsername();
+  const appShortName = getTelegramAppShortName();
+  const safeParam = String(startParam || "").trim().slice(0, 128);
+  const suffix = safeParam ? `?startapp=${encodeURIComponent(safeParam)}` : "";
+
+  return `https://t.me/${botUsername}/${appShortName}${suffix}`;
+}
+
 function sendAdminAlert(eventName, text) {
   if (!shouldSendAdminAlert(eventName)) return;
 
@@ -710,6 +729,30 @@ function getStartKeyboard(startParam = "") {
   };
 }
 
+function isDuelStartPayload(startPayload) {
+  return /^duel_[A-Za-z0-9_-]+$/.test(String(startPayload || ""));
+}
+
+function getDuelStartMessage() {
+  return [
+    "⚔️ Тебя пригласили в дуэль Type Fight.",
+    "Нажми кнопку ниже, чтобы открыть игровую сессию и начать бой.",
+  ].join("\n");
+}
+
+function getDuelStartKeyboard(startPayload) {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "⚔️ Открыть дуэль",
+          url: getTelegramMiniAppStartUrl(startPayload),
+        },
+      ],
+    ],
+  };
+}
+
 function formatPercent(value) {
   return `${Number(value || 0).toFixed(1)}%`;
 }
@@ -826,9 +869,15 @@ async function handleTelegramBotMessage(message, req = null) {
 
   if (text.startsWith("/start")) {
     try {
-      await sendTelegramMessage(chatId, getStartMessage(), {
-        reply_markup: getStartKeyboard(startPayload),
-      });
+      if (isDuelStartPayload(startPayload)) {
+        await sendTelegramMessage(chatId, getDuelStartMessage(), {
+          reply_markup: getDuelStartKeyboard(startPayload),
+        });
+      } else {
+        await sendTelegramMessage(chatId, getStartMessage(), {
+          reply_markup: getStartKeyboard(startPayload),
+        });
+      }
     } catch (error) {
       console.error("Failed to send Telegram start message:", error);
       logSystemEvent(req, {
@@ -1078,8 +1127,13 @@ const server = http.createServer(async (req, res) => {
       if (text.startsWith("/start") && chatId) {
         sendJson(res, 200, { ok: true });
 
-        void sendTelegramMessage(chatId, getStartMessage(), {
-            reply_markup: getStartKeyboard(startPayload),
+        const startMessage = isDuelStartPayload(startPayload) ? getDuelStartMessage() : getStartMessage();
+        const startKeyboard = isDuelStartPayload(startPayload)
+          ? getDuelStartKeyboard(startPayload)
+          : getStartKeyboard(startPayload);
+
+        void sendTelegramMessage(chatId, startMessage, {
+            reply_markup: startKeyboard,
           }).catch((error) => {
           console.error("Failed to send Telegram start message:", error);
           logSystemEvent(req, {
