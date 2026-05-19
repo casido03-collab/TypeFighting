@@ -308,6 +308,18 @@ export const api = {
     });
   },
 
+  async recordPushOpen(pushType: "inactive_24h" | "win_streak" | "friend_duel") {
+    if (!canUseApi()) {
+      return null;
+    }
+
+    return request<{ accepted: boolean; duplicate?: boolean }>("/push/open", {
+      method: "POST",
+      body: { pushType },
+      keepalive: true,
+    });
+  },
+
   async trackEvent(event: {
     eventName: string;
     eventSource?: string;

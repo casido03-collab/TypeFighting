@@ -260,6 +260,12 @@ export default function App() {
 
     if (action.type === "none") return;
 
+    if (action.type === "push") {
+      void api.recordPushOpen(action.pushType);
+      showSearchMessage("С возвращением в Type Fight.", 2200);
+      return;
+    }
+
     if (action.type === "unknown") {
       showSearchMessage("Неизвестная ссылка запуска.", 2500);
       return;

@@ -1,6 +1,7 @@
 export type StartAppAction =
   | { type: "duel"; duelId: string }
   | { type: "referral"; referralCode: string }
+  | { type: "push"; pushType: "inactive_24h" | "win_streak" | "friend_duel"; startParam: string }
   | { type: "unknown"; value: string }
   | { type: "none" };
 
@@ -25,6 +26,18 @@ export function parseStartAppParam(value: string | null | undefined): StartAppAc
 
   if (startParam.startsWith("ref_") && startParam.length > "ref_".length) {
     return { type: "referral", referralCode: startParam.slice(4) };
+  }
+
+  if (startParam === "push_inactive_24h") {
+    return { type: "push", pushType: "inactive_24h", startParam };
+  }
+
+  if (startParam === "push_win_streak") {
+    return { type: "push", pushType: "win_streak", startParam };
+  }
+
+  if (startParam === "push_friend_duel") {
+    return { type: "push", pushType: "friend_duel", startParam };
   }
 
   return { type: "unknown", value: startParam };

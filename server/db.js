@@ -1,4 +1,11 @@
 const { Pool } = require("pg");
+const {
+  PUSH_DEDUP_OPEN_MS,
+  PUSH_INTERVALS_MS,
+  PUSH_PRIORITY,
+  PUSH_TYPES,
+  pushTypeFromStartParam,
+} = require("./pushConfig");
 
 const ENERGY_MAX = 50;
 const BATTLE_MODES = new Set(["ai", "online", "friend"]);
@@ -158,6 +165,57 @@ async function initDb() {
     `);
 
     await query("create index if not exists idx_players_telegram_id on players(telegram_id)");
+    await query("alter table players add column if not exists last_seen_at timestamptz not null default now()");
+    await query("alter table players add column if not exists push_disabled_at timestamptz");
+    await query("alter table players add column if not exists push_disabled_reason text");
+    await query("alter table players add column if not exists last_push_open_type text");
+    await query("alter table players add column if not exists last_push_opened_at timestamptz");
+
+    await query(`
+      create table if not exists push_state (
+        player_id uuid primary key references players(id) on delete cascade,
+        last_inactive_message_index integer,
+        last_inactive_sent_at timestamptz,
+        last_push_sent_at timestamptz,
+        win_streak_key text,
+        win_streak_push_sent_at timestamptz,
+        friend_duel_key text,
+        friend_duel_push_sent_at timestamptz,
+        last_friend_duel_at timestamptz,
+        updated_at timestamptz not null default now()
+      )
+    `);
+
+    await query(`
+      create table if not exists push_events (
+        id uuid primary key default gen_random_uuid(),
+        player_id uuid references players(id) on delete set null,
+        push_type text not null,
+        event_name text not null,
+        message_index integer,
+        telegram_error text,
+        metadata jsonb not null default '{}'::jsonb,
+        created_at timestamptz not null default now()
+      )
+    `);
+
+    await query(`
+      create table if not exists push_stats (
+        push_type text primary key,
+        sent_count integer not null default 0 check (sent_count >= 0),
+        opened_count integer not null default 0 check (opened_count >= 0),
+        updated_at timestamptz not null default now()
+      )
+    `);
+
+    for (const pushType of PUSH_PRIORITY) {
+      await query("insert into push_stats (push_type) values ($1) on conflict (push_type) do nothing", [pushType]);
+    }
+
+    await query("create index if not exists idx_players_last_seen_at on players(last_seen_at)");
+    await query("create index if not exists idx_players_push_disabled_at on players(push_disabled_at)");
+    await query("create index if not exists idx_push_events_created_at on push_events(created_at desc)");
+    await query("create index if not exists idx_push_events_type_event_created on push_events(push_type, event_name, created_at desc)");
     await query("create index if not exists idx_player_stats_score on player_stats(score desc)");
     await query("create index if not exists idx_battle_results_player_id on battle_results(player_id)");
     await query("create index if not exists idx_battle_results_created_at on battle_results(created_at desc)");
@@ -300,6 +358,7 @@ async function ensureTelegramPlayer(user) {
         photo_url = excluded.photo_url,
         language_code = excluded.language_code,
         display_name = excluded.display_name,
+        last_seen_at = now(),
         updated_at = now()
       returning *
     `,
@@ -320,6 +379,9 @@ async function ensureTelegramPlayer(user) {
     playerRow.id,
   ]);
   await query("insert into player_energy (player_id) values ($1) on conflict (player_id) do nothing", [
+    playerRow.id,
+  ]);
+  await query("insert into push_state (player_id) values ($1) on conflict (player_id) do nothing", [
     playerRow.id,
   ]);
   await query(
@@ -925,6 +987,331 @@ async function getAdminStats() {
   };
 }
 
+function isPushType(value) {
+  return PUSH_PRIORITY.includes(String(value || ""));
+}
+
+function dateMs(value) {
+  if (!value) return 0;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function buildWinStreakKey(row) {
+  return `streak:${Number(row.current_streak || 0)}:${dateMs(row.stats_updated_at)}`;
+}
+
+function buildFriendDuelKey(value) {
+  return `friend:${dateMs(value)}`;
+}
+
+async function getPushCandidates(limit = 300) {
+  if (!hasDatabase()) return [];
+  await initDb();
+
+  const result = await query(
+    `
+      select
+        p.id,
+        p.telegram_id,
+        p.display_name,
+        p.last_seen_at,
+        p.push_disabled_at,
+        s.current_streak,
+        s.updated_at as stats_updated_at,
+        ps.last_inactive_message_index,
+        ps.last_inactive_sent_at,
+        ps.last_push_sent_at,
+        ps.win_streak_key,
+        ps.win_streak_push_sent_at,
+        ps.friend_duel_key,
+        ps.friend_duel_push_sent_at,
+        ps.last_friend_duel_at
+      from players p
+      join player_stats s on s.player_id = p.id
+      left join push_state ps on ps.player_id = p.id
+      where p.push_disabled_at is null
+        and p.telegram_id is not null
+        and p.last_seen_at <= now() - interval '2 hours'
+        and (
+          ps.last_push_sent_at is null
+          or ps.last_push_sent_at < date_trunc('day', now())
+        )
+      order by p.last_seen_at asc
+      limit $1
+    `,
+    [limit]
+  );
+
+  const now = Date.now();
+  const candidates = [];
+
+  for (const row of result.rows) {
+    const lastSeenMs = dateMs(row.last_seen_at);
+    const inactiveMs = now - lastSeenMs;
+    const friendDuelMs = dateMs(row.last_friend_duel_at);
+    const statsUpdatedMs = dateMs(row.stats_updated_at);
+    const friendDuelKey = buildFriendDuelKey(row.last_friend_duel_at);
+    const winStreakKey = buildWinStreakKey(row);
+
+    const friendDuelReady =
+      friendDuelMs > 0 &&
+      inactiveMs >= PUSH_INTERVALS_MS[PUSH_TYPES.FRIEND_DUEL] &&
+      friendDuelMs + 60 * 1000 >= lastSeenMs &&
+      row.friend_duel_key !== friendDuelKey;
+
+    const winStreakReady =
+      Number(row.current_streak || 0) >= 2 &&
+      inactiveMs >= PUSH_INTERVALS_MS[PUSH_TYPES.WIN_STREAK] &&
+      statsUpdatedMs + 60 * 1000 >= lastSeenMs &&
+      row.win_streak_key !== winStreakKey;
+
+    const inactiveReady =
+      inactiveMs >= PUSH_INTERVALS_MS[PUSH_TYPES.INACTIVE_24H] &&
+      (!row.last_inactive_sent_at ||
+        now - dateMs(row.last_inactive_sent_at) >= PUSH_INTERVALS_MS[PUSH_TYPES.INACTIVE_24H]);
+
+    if (friendDuelReady) {
+      candidates.push({ ...row, pushType: PUSH_TYPES.FRIEND_DUEL, pushKey: friendDuelKey });
+    } else if (winStreakReady) {
+      candidates.push({ ...row, pushType: PUSH_TYPES.WIN_STREAK, pushKey: winStreakKey });
+    } else if (inactiveReady) {
+      candidates.push({ ...row, pushType: PUSH_TYPES.INACTIVE_24H, pushKey: null });
+    }
+  }
+
+  return candidates;
+}
+
+async function recordPushSent(playerId, pushType, messageIndex, pushKey = null) {
+  if (!hasDatabase() || !playerId || !isPushType(pushType)) return null;
+  await initDb();
+
+  await query(
+    `
+      insert into push_events (player_id, push_type, event_name, message_index, metadata)
+      values ($1, $2, 'sent', $3, $4::jsonb)
+    `,
+    [playerId, pushType, messageIndex, JSON.stringify({ pushKey })]
+  );
+
+  await query(
+    `
+      insert into push_stats (push_type, sent_count, opened_count, updated_at)
+      values ($1, 1, 0, now())
+      on conflict (push_type) do update set
+        sent_count = push_stats.sent_count + 1,
+        updated_at = now()
+    `,
+    [pushType]
+  );
+
+  await query(
+    `
+      insert into push_state (
+        player_id,
+        last_inactive_message_index,
+        last_inactive_sent_at,
+        last_push_sent_at,
+        win_streak_key,
+        win_streak_push_sent_at,
+        friend_duel_key,
+        friend_duel_push_sent_at,
+        updated_at
+      )
+      values (
+        $1,
+        case when $2 = 'inactive_24h' then $3 else null end,
+        case when $2 = 'inactive_24h' then now() else null end,
+        now(),
+        case when $2 = 'win_streak' then $4 else null end,
+        case when $2 = 'win_streak' then now() else null end,
+        case when $2 = 'friend_duel' then $4 else null end,
+        case when $2 = 'friend_duel' then now() else null end,
+        now()
+      )
+      on conflict (player_id) do update set
+        last_inactive_message_index = case
+          when $2 = 'inactive_24h' then $3
+          else push_state.last_inactive_message_index
+        end,
+        last_inactive_sent_at = case
+          when $2 = 'inactive_24h' then now()
+          else push_state.last_inactive_sent_at
+        end,
+        last_push_sent_at = now(),
+        win_streak_key = case
+          when $2 = 'win_streak' then $4
+          else push_state.win_streak_key
+        end,
+        win_streak_push_sent_at = case
+          when $2 = 'win_streak' then now()
+          else push_state.win_streak_push_sent_at
+        end,
+        friend_duel_key = case
+          when $2 = 'friend_duel' then $4
+          else push_state.friend_duel_key
+        end,
+        friend_duel_push_sent_at = case
+          when $2 = 'friend_duel' then now()
+          else push_state.friend_duel_push_sent_at
+        end,
+        updated_at = now()
+    `,
+    [playerId, pushType, messageIndex, pushKey]
+  );
+
+  return { accepted: true };
+}
+
+async function recordPushFailed(playerId, pushType, errorMessage) {
+  if (!hasDatabase() || !playerId || !isPushType(pushType)) return null;
+  await initDb();
+
+  await query(
+    `
+      insert into push_events (player_id, push_type, event_name, telegram_error)
+      values ($1, $2, 'failed', $3)
+    `,
+    [playerId, pushType, String(errorMessage || "telegram_send_failed").slice(0, 500)]
+  );
+
+  return { accepted: true };
+}
+
+async function markTelegramPushBlocked(playerId, reason) {
+  if (!hasDatabase() || !playerId) return null;
+  await initDb();
+
+  await query(
+    `
+      update players
+      set
+        push_disabled_at = now(),
+        push_disabled_reason = $2,
+        updated_at = now()
+      where id = $1
+    `,
+    [playerId, String(reason || "telegram_blocked").slice(0, 200)]
+  );
+
+  await query(
+    `
+      insert into push_events (player_id, push_type, event_name, telegram_error)
+      values ($1, $2, 'skipped_blocked', $3)
+    `,
+    [playerId, PUSH_TYPES.INACTIVE_24H, String(reason || "telegram_blocked").slice(0, 500)]
+  );
+
+  return { accepted: true };
+}
+
+async function recordPushOpen(user, startParamOrType) {
+  if (!hasDatabase()) return null;
+  const pushType = pushTypeFromStartParam(startParamOrType) || String(startParamOrType || "");
+  if (!isPushType(pushType)) return { accepted: false, duplicate: false };
+
+  const playerRow = await ensureTelegramPlayer(user);
+  if (!playerRow) return null;
+
+  const currentResult = await query(
+    `
+      select last_push_open_type, last_push_opened_at
+      from players
+      where id = $1
+    `,
+    [playerRow.id]
+  );
+  const current = currentResult.rows[0];
+  const duplicate =
+    current?.last_push_open_type === pushType &&
+    Date.now() - dateMs(current.last_push_opened_at) < PUSH_DEDUP_OPEN_MS;
+
+  if (duplicate) {
+    return { accepted: true, duplicate: true };
+  }
+
+  await query(
+    `
+      update players
+      set
+        last_push_open_type = $2,
+        last_push_opened_at = now(),
+        updated_at = now()
+      where id = $1
+    `,
+    [playerRow.id, pushType]
+  );
+
+  await query(
+    `
+      insert into push_events (player_id, push_type, event_name)
+      values ($1, $2, 'opened')
+    `,
+    [playerRow.id, pushType]
+  );
+
+  await query(
+    `
+      insert into push_stats (push_type, sent_count, opened_count, updated_at)
+      values ($1, 0, 1, now())
+      on conflict (push_type) do update set
+        opened_count = push_stats.opened_count + 1,
+        updated_at = now()
+    `,
+    [pushType]
+  );
+
+  return { accepted: true, duplicate: false };
+}
+
+async function getPushStats() {
+  if (!hasDatabase()) return null;
+  await initDb();
+
+  const result = await query(
+    `
+      select push_type, sent_count, opened_count
+      from push_stats
+      where push_type = any($1)
+    `,
+    [PUSH_PRIORITY]
+  );
+
+  const rows = new Map(result.rows.map((row) => [row.push_type, row]));
+  return PUSH_PRIORITY.map((pushType) => {
+    const row = rows.get(pushType) || {};
+    const sent = Number(row.sent_count || 0);
+    const opened = Number(row.opened_count || 0);
+    return {
+      pushType,
+      sent,
+      opened,
+      ctr: sent > 0 ? (opened / sent) * 100 : 0,
+    };
+  });
+}
+
+async function markFriendDuelActivity(playerId, battleId, finishedAt) {
+  if (!hasDatabase() || !playerId) return null;
+  await initDb();
+
+  await query(
+    `
+      insert into push_state (player_id, last_friend_duel_at, friend_duel_key, friend_duel_push_sent_at, updated_at)
+      values ($1, $2, $3, null, now())
+      on conflict (player_id) do update set
+        last_friend_duel_at = excluded.last_friend_duel_at,
+        friend_duel_key = null,
+        friend_duel_push_sent_at = null,
+        updated_at = now()
+    `,
+    [playerId, finishedAt, battleId ? `friend:${battleId}` : null]
+  );
+
+  return { accepted: true };
+}
+
 async function recordBattleResult(user, result) {
   if (!hasDatabase()) return null;
   if (!BATTLE_MODES.has(result?.mode) || !BATTLE_OUTCOMES.has(result?.outcome)) {
@@ -1056,6 +1443,10 @@ async function recordBattleResult(user, result) {
     energySpent = Number(energyResult.rows[0]?.energy_spent || 0);
   }
 
+  if (result.mode === "friend") {
+    await markFriendDuelActivity(playerRow.id, battleId || resultId, finishedAt);
+  }
+
   return {
     ...(await selectPlayerState(playerRow.id)),
     energySpent,
@@ -1160,12 +1551,18 @@ module.exports = {
   getDuelInviteStatus,
   getLeaderboard,
   getAdminStats,
+  getPushCandidates,
+  getPushStats,
   hasDatabase,
   initDb,
   joinDuelInvite,
   recordBattleResult,
   recordAnalyticsEvent,
+  recordPushFailed,
+  recordPushOpen,
+  recordPushSent,
   recordSystemEvent,
+  markTelegramPushBlocked,
   saveActiveBattle,
   upsertTelegramPlayer,
 };

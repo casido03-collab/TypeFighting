@@ -10,15 +10,28 @@ const {
   getAdminStats,
   getDuelInviteStatus,
   getLeaderboard,
+  getPushCandidates,
+  getPushStats,
   hasDatabase,
   initDb,
   joinDuelInvite,
   recordAnalyticsEvent,
   recordBattleResult,
+  recordPushFailed,
+  recordPushOpen,
+  recordPushSent,
   recordSystemEvent,
+  markTelegramPushBlocked,
   saveActiveBattle,
   upsertTelegramPlayer,
 } = require("./db");
+const {
+  PUSH_LABELS,
+  PUSH_SCHEDULER_INTERVAL_MS,
+  PUSH_START_PARAMS,
+  PUSH_TYPES,
+  getPushMessages,
+} = require("./pushConfig");
 
 const PORT = Number(process.env.PORT || 3001);
 const MAX_INIT_DATA_AGE_SECONDS = 3 * 60 * 60;
@@ -692,6 +705,112 @@ function getStartKeyboard() {
   };
 }
 
+function formatPercent(value) {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+function formatPushStats(stats) {
+  if (!stats) return "Push stats недоступна.";
+
+  const byType = new Map(stats.map((row) => [row.pushType, row]));
+  const sections = [PUSH_TYPES.INACTIVE_24H, PUSH_TYPES.WIN_STREAK, PUSH_TYPES.FRIEND_DUEL].map((pushType) => {
+    const row = byType.get(pushType) || { sent: 0, opened: 0, ctr: 0 };
+    return [
+      PUSH_LABELS[pushType],
+      `Sent: ${row.sent}`,
+      `Opened: ${row.opened}`,
+      `CTR: ${formatPercent(row.ctr)}`,
+    ].join("\n");
+  });
+
+  return ["📊 Push Stats", "", ...sections.flatMap((section) => [section, ""])].join("\n").trim();
+}
+
+function pickPushMessage(pushType, lastIndex) {
+  const messages = getPushMessages(pushType);
+  if (messages.length === 0) return { text: "Type Fight ждёт тебя на арене ⚔️", index: 0 };
+  if (messages.length === 1) return { text: messages[0], index: 0 };
+
+  let index = Math.floor(Math.random() * messages.length);
+  if (Number.isInteger(lastIndex) && index === lastIndex) {
+    index = (index + 1 + Math.floor(Math.random() * (messages.length - 1))) % messages.length;
+  }
+
+  return { text: messages[index], index };
+}
+
+function getPushKeyboard(pushType) {
+  const startParam = PUSH_START_PARAMS[pushType] || PUSH_START_PARAMS[PUSH_TYPES.INACTIVE_24H];
+  const appUrl = new URL(getPublicAppUrl());
+  appUrl.searchParams.set("startapp", startParam);
+
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: "⚔️ Играть",
+          web_app: { url: appUrl.toString() },
+        },
+      ],
+    ],
+  };
+}
+
+function isTelegramBlockedError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("bot was blocked") ||
+    message.includes("user is deactivated") ||
+    message.includes("chat not found") ||
+    message.includes("forbidden")
+  );
+}
+
+function isPushSchedulerEnabled() {
+  return process.env.PUSH_SCHEDULER_ENABLED !== "false";
+}
+
+async function runPushScheduler() {
+  if (!hasDatabase() || !process.env.TELEGRAM_BOT_TOKEN || !isPushSchedulerEnabled()) return;
+
+  const candidates = await getPushCandidates();
+  for (const candidate of candidates) {
+    const pushType = candidate.pushType;
+    const lastIndex = pushType === PUSH_TYPES.INACTIVE_24H ? Number(candidate.last_inactive_message_index) : null;
+    const message = pickPushMessage(pushType, lastIndex);
+
+    try {
+      await sendTelegramMessage(String(candidate.telegram_id), message.text, {
+        reply_markup: getPushKeyboard(pushType),
+      });
+      await recordPushSent(candidate.id, pushType, message.index, candidate.pushKey);
+    } catch (error) {
+      console.error("Failed to send push message:", error);
+      await recordPushFailed(candidate.id, pushType, error.message || "telegram_send_failed");
+      if (isTelegramBlockedError(error)) {
+        await markTelegramPushBlocked(candidate.id, error.message || "telegram_blocked");
+      }
+    }
+  }
+}
+
+function startPushScheduler() {
+  if (!isPushSchedulerEnabled()) return;
+
+  const firstRunDelay = setTimeout(() => {
+    void runPushScheduler().catch((error) => {
+      console.error("Push scheduler failed:", error);
+    });
+  }, 30 * 1000);
+  firstRunDelay.unref?.();
+
+  setInterval(() => {
+    void runPushScheduler().catch((error) => {
+      console.error("Push scheduler failed:", error);
+    });
+  }, PUSH_SCHEDULER_INTERVAL_MS).unref();
+}
+
 async function handleTelegramBotMessage(message, req = null) {
   const text = String(message?.text || "").trim();
   const fromId = message?.from?.id;
@@ -710,6 +829,36 @@ async function handleTelegramBotMessage(message, req = null) {
         eventName: "telegram_send_failed",
         message: error.message || "Failed to send start message",
         metadata: { chatId, command: "start" },
+      });
+    }
+
+    return true;
+  }
+
+  if (text.startsWith("/pushstats")) {
+    if (!isAdminTelegramId(fromId)) {
+      try {
+        await sendTelegramMessage(chatId, "Нет доступа к push-статистике.");
+      } catch (error) {
+        console.error("Failed to send Telegram access denied message:", error);
+        logSystemEvent(req, {
+          eventName: "telegram_send_failed",
+          message: error.message || "Failed to send access denied message",
+          metadata: { chatId, command: "pushstats_denied" },
+        });
+      }
+
+      return true;
+    }
+
+    try {
+      await sendTelegramMessage(chatId, formatPushStats(await getPushStats()));
+    } catch (error) {
+      console.error("Failed to send Telegram push stats message:", error);
+      logSystemEvent(req, {
+        eventName: "telegram_send_failed",
+        message: error.message || "Failed to send push stats message",
+        metadata: { chatId, command: "pushstats" },
       });
     }
 
@@ -932,6 +1081,33 @@ const server = http.createServer(async (req, res) => {
             metadata: { chatId, command: "start" },
           });
         });
+        return;
+      }
+
+      if (text.startsWith("/pushstats") && chatId) {
+        if (!isAdminTelegramId(fromId)) {
+          void sendTelegramMessage(chatId, "Нет доступа к push-статистике.").catch((error) => {
+            console.error("Failed to send Telegram access denied message:", error);
+            logSystemEvent(req, {
+              eventName: "telegram_send_failed",
+              message: error.message || "Failed to send access denied message",
+              metadata: { chatId, command: "pushstats_denied" },
+            });
+          });
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+
+        const stats = await getPushStats();
+        void sendTelegramMessage(chatId, formatPushStats(stats)).catch((error) => {
+          console.error("Failed to send Telegram push stats message:", error);
+          logSystemEvent(req, {
+            eventName: "telegram_send_failed",
+            message: error.message || "Failed to send push stats message",
+            metadata: { chatId, command: "pushstats" },
+          });
+        });
+        sendJson(res, 200, { ok: true });
         return;
       }
 
@@ -1186,6 +1362,16 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === "POST" && pathname === "/api/push/open") {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+      if (isRateLimited(req, res, "push_open", { limit: 20, windowMs: 60 * 1000 }, user)) return;
+
+      const body = JSON.parse((await readBody(req)) || "{}");
+      sendJson(res, 200, await recordPushOpen(user, body.pushType || body.startParam));
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/api/analytics/events") {
       const user = getOptionalTelegramUser(req);
       if (isRateLimited(req, res, "analytics", { limit: 60, windowMs: 60 * 1000 }, user)) return;
@@ -1271,5 +1457,6 @@ initDb()
     server.listen(PORT, "127.0.0.1", () => {
       console.log(`Type Fight API listening on 127.0.0.1:${PORT}`);
       void startTelegramPolling();
+      startPushScheduler();
     });
   });
