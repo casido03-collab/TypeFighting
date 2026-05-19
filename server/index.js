@@ -529,13 +529,15 @@ function formatAdminStats(stats) {
 
 async function sendTelegramMessage(chatId, text, extra = {}) {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
-  if (!botToken) return;
+  if (!botToken) {
+    throw new Error("TELEGRAM_BOT_TOKEN is not configured");
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
 
   try {
-    await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -546,6 +548,11 @@ async function sendTelegramMessage(chatId, text, extra = {}) {
       }),
       signal: controller.signal,
     });
+
+    const result = await response.json().catch(() => null);
+    if (!response.ok || result?.ok === false) {
+      throw new Error(result?.description || `Telegram sendMessage failed with ${response.status}`);
+    }
   } finally {
     clearTimeout(timeout);
   }
@@ -625,16 +632,21 @@ const server = http.createServer(async (req, res) => {
       const chatId = message?.chat?.id;
 
       if (text.startsWith("/start") && chatId) {
-        void sendTelegramMessage(chatId, getStartMessage(), {
-          reply_markup: getStartKeyboard(),
-        }).catch((error) => {
+        try {
+          await sendTelegramMessage(chatId, getStartMessage(), {
+            reply_markup: getStartKeyboard(),
+          });
+        } catch (error) {
           console.error("Failed to send Telegram start message:", error);
           logSystemEvent(req, {
             eventName: "telegram_send_failed",
             message: error.message || "Failed to send start message",
             metadata: { chatId, command: "start" },
           });
-        });
+          sendJson(res, 500, { error: "telegram_send_failed" });
+          return;
+        }
+
         sendJson(res, 200, { ok: true });
         return;
       }
