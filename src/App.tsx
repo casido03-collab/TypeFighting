@@ -22,7 +22,7 @@ import {
 } from "./lib/progressStorage";
 import type { StoredBattleResult, StoredLanguage } from "./lib/progressStorage";
 import { telegram } from "./lib/telegram";
-import { buildStartAppLink } from "./lib/telegramLinks";
+import { buildBotStartLink, buildStartAppLink } from "./lib/telegramLinks";
 import { parseStartAppParam } from "./lib/startApp";
 import { styles } from "./styles/styles";
 
@@ -468,7 +468,7 @@ export default function App() {
       const invite = await api.createDuelInvite();
 
       void api.trackEvent({ eventName: "duel_created", duelId: invite.duelId });
-      setDuelLink(buildStartAppLink(invite.startParam));
+      setDuelLink(buildBotStartLink(invite.startParam));
       setPendingDuelId(invite.duelId);
       setDuelCopied(false);
       setDuelInviteOpen(true);
@@ -503,7 +503,8 @@ export default function App() {
   async function copyDuelLink() {
     if (!duelLink) return;
 
-    const duelId = new URL(duelLink).searchParams.get("startapp") || undefined;
+    const duelUrl = new URL(duelLink);
+    const duelId = duelUrl.searchParams.get("startapp") || duelUrl.searchParams.get("start") || undefined;
     void api.trackEvent({ eventName: "duel_copied", duelId });
 
     try {

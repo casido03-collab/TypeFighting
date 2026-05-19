@@ -686,13 +686,18 @@ function getStartMessage() {
   ].join("\n");
 }
 
-function getStartKeyboard() {
+function getStartKeyboard(startParam = "") {
+  const appUrl = new URL(getPublicAppUrl());
+  if (startParam) {
+    appUrl.searchParams.set("startapp", startParam);
+  }
+
   return {
     inline_keyboard: [
       [
         {
           text: "⚔️ Играть",
-          web_app: { url: getPublicAppUrl() },
+          web_app: { url: appUrl.toString() },
         },
       ],
       [
@@ -815,13 +820,14 @@ async function handleTelegramBotMessage(message, req = null) {
   const text = String(message?.text || "").trim();
   const fromId = message?.from?.id;
   const chatId = message?.chat?.id;
+  const startPayload = text.startsWith("/start") ? text.split(/\s+/)[1] || "" : "";
 
   if (!text || !chatId) return false;
 
   if (text.startsWith("/start")) {
     try {
       await sendTelegramMessage(chatId, getStartMessage(), {
-        reply_markup: getStartKeyboard(),
+        reply_markup: getStartKeyboard(startPayload),
       });
     } catch (error) {
       console.error("Failed to send Telegram start message:", error);
@@ -1067,12 +1073,13 @@ const server = http.createServer(async (req, res) => {
       const text = String(message?.text || "").trim();
       const fromId = message?.from?.id;
       const chatId = message?.chat?.id;
+      const startPayload = text.startsWith("/start") ? text.split(/\s+/)[1] || "" : "";
 
       if (text.startsWith("/start") && chatId) {
         sendJson(res, 200, { ok: true });
 
         void sendTelegramMessage(chatId, getStartMessage(), {
-            reply_markup: getStartKeyboard(),
+            reply_markup: getStartKeyboard(startPayload),
           }).catch((error) => {
           console.error("Failed to send Telegram start message:", error);
           logSystemEvent(req, {

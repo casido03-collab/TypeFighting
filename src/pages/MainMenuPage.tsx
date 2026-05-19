@@ -50,7 +50,8 @@ export default function MainMenuPage({
   async function shareDuelLink() {
     if (!duelLink) return;
 
-    const duelId = new URL(duelLink).searchParams.get("startapp") || undefined;
+    const duelUrl = new URL(duelLink);
+    const duelId = duelUrl.searchParams.get("startapp") || duelUrl.searchParams.get("start") || undefined;
     void api.trackEvent({ eventName: "duel_shared", duelId });
 
     const shareText = "Присоединяйся к дуэли в Type Fight";

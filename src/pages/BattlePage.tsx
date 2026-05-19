@@ -82,6 +82,7 @@ export default function BattlePage({
   const isServerBattleRef = useRef(false);
   const gameOverRef = useRef(false);
   const lastServerWordRef = useRef("");
+  const serverBattleRef = useRef<BattleStateResponse | null>(null);
   const leavingBattleRef = useRef(false);
 
   const isServerBattle = Boolean(battleId && mode !== "ai");
@@ -92,6 +93,7 @@ export default function BattlePage({
   const displayedMaxHp = serverBattle?.maxHp ?? maxHp;
   const displayedPlayerTypedCount = serverBattle?.player.typedCount ?? typed.length;
   const displayedEnemyTypedCount = serverBattle?.opponent.typedCount ?? aiTypedCount;
+  const opponentName = serverBattle?.opponent.name || (mode === "ai" ? "BOT" : "PLAYER");
   const serverFinished = serverBattle?.status === "finished" || serverBattle?.status === "cancelled";
   const serverPlayerWon = serverBattle?.status === "finished" && serverBattle.winnerId === serverBattle.player.id;
   const gameOver = playerHp <= 0 || enemyHp <= 0 || serverFinished;
@@ -232,6 +234,24 @@ export default function BattlePage({
       try {
         const state = await api.getBattleState(battleId);
         if (cancelled || !state) return;
+
+        const previousState = serverBattleRef.current;
+        serverBattleRef.current = state;
+
+        if (
+          previousState &&
+          previousState.status === "active" &&
+          state.status === "active" &&
+          state.player.hp < previousState.player.hp &&
+          actionRef.current === "idle"
+        ) {
+          if (resetTimer.current) window.clearTimeout(resetTimer.current);
+          setAction("enemyAttack");
+          resetTimer.current = window.setTimeout(() => {
+            setAction("playerFall");
+            resetDelayed();
+          }, ATTACK_MS);
+        }
 
         setServerBattle(state);
         setServerError("");
@@ -648,7 +668,7 @@ export default function BattlePage({
       className={`tk-battle-layout${isTypingFocused ? " tk-battle-keyboard-open" : ""}`}
       style={styles.battleLayout}
     >
-      <BattleHeader onMenu={handleMenu} combo={combo} mode={mode} />
+      <BattleHeader onMenu={handleMenu} combo={combo} mode={mode} opponentName={opponentName} />
 
       <BattleArena
         playerHp={displayedPlayerHp}
@@ -659,6 +679,7 @@ export default function BattlePage({
         typed={typed}
         playerTypedCount={displayedPlayerTypedCount}
         aiTypedCount={displayedEnemyTypedCount}
+        opponentName={opponentName}
         action={action}
         maxHp={displayedMaxHp}
         gameOver={gameOver}
@@ -709,12 +730,22 @@ function getPlayerWord(words: string[], wordIndex: number) {
   return words[wordIndex % words.length] || "молния";
 }
 
-function BattleHeader({ onMenu, combo, mode }: { onMenu: () => void; combo: number; mode: string }) {
+function BattleHeader({
+  onMenu,
+  combo,
+  mode,
+  opponentName,
+}: {
+  onMenu: () => void;
+  combo: number;
+  mode: string;
+  opponentName: string;
+}) {
   return (
     <header style={styles.battleHeader}>
       <button style={styles.backButton} type="button" onClick={onMenu}>←</button>
       <div style={styles.battleHeaderCenter}>
-        <div style={styles.battleTitle}>YOU <span>VS</span> {mode === "ai" ? "BOT" : "PLAYER"}</div>
+        <div style={styles.battleTitle}>YOU <span>VS</span> {mode === "ai" ? "BOT" : opponentName}</div>
         <div style={styles.comboMini}>COMBO x{combo}</div>
       </div>
       <div style={styles.timer}>1:25</div>
@@ -731,6 +762,7 @@ function BattleArena({
   typed,
   playerTypedCount,
   aiTypedCount,
+  opponentName,
   action,
   maxHp,
   gameOver,
@@ -748,6 +780,7 @@ function BattleArena({
   typed: string;
   playerTypedCount: number;
   aiTypedCount: number;
+  opponentName: string;
   action: string;
   maxHp: number;
   gameOver: boolean;
@@ -769,7 +802,7 @@ function BattleArena({
       <div style={styles.hudRow}>
         <HpSide name="YOU" hp={`${playerHp}/${maxHp}`} side="player" percent={playerHp / maxHp} />
         <div style={styles.versus}>VS</div>
-        <HpSide name="BOT" hp={`${enemyHp}/${maxHp}`} side="enemy" percent={enemyHp / maxHp} />
+        <HpSide name={opponentName} hp={`${enemyHp}/${maxHp}`} side="enemy" percent={enemyHp / maxHp} />
       </div>
 
       <div style={styles.arenaGround} />
