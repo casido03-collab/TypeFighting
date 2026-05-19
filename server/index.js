@@ -632,22 +632,18 @@ const server = http.createServer(async (req, res) => {
       const chatId = message?.chat?.id;
 
       if (text.startsWith("/start") && chatId) {
-        try {
-          await sendTelegramMessage(chatId, getStartMessage(), {
+        sendJson(res, 200, { ok: true });
+
+        void sendTelegramMessage(chatId, getStartMessage(), {
             reply_markup: getStartKeyboard(),
-          });
-        } catch (error) {
+          }).catch((error) => {
           console.error("Failed to send Telegram start message:", error);
           logSystemEvent(req, {
             eventName: "telegram_send_failed",
             message: error.message || "Failed to send start message",
             metadata: { chatId, command: "start" },
           });
-          sendJson(res, 500, { error: "telegram_send_failed" });
-          return;
-        }
-
-        sendJson(res, 200, { ok: true });
+        });
         return;
       }
 
