@@ -142,16 +142,23 @@ export default function App() {
   }, [screen]);
 
   useEffect(() => {
-    if (!pendingDuelId || !duelInviteOpen || !api.isConfigured) return;
+    if (!pendingDuelId || !api.isConfigured) return;
 
-    duelPollTimer.current = window.setInterval(() => {
+    function checkPendingDuel() {
       void pollDuelInvite(pendingDuelId);
-    }, 2200);
+    }
+
+    checkPendingDuel();
+    duelPollTimer.current = window.setInterval(checkPendingDuel, 2200);
+    window.addEventListener("focus", checkPendingDuel);
+    document.addEventListener("visibilitychange", checkPendingDuel);
 
     return () => {
       if (duelPollTimer.current) window.clearInterval(duelPollTimer.current);
+      window.removeEventListener("focus", checkPendingDuel);
+      document.removeEventListener("visibilitychange", checkPendingDuel);
     };
-  }, [duelInviteOpen, pendingDuelId]);
+  }, [pendingDuelId]);
 
   function playFeedback() {
     if (settings.vibrationEnabled) {
