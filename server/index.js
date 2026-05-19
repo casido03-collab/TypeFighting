@@ -741,12 +741,15 @@ function getDuelStartMessage() {
 }
 
 function getDuelStartKeyboard(startPayload) {
+  const appUrl = new URL(getPublicAppUrl());
+  appUrl.searchParams.set("startapp", startPayload);
+
   return {
     inline_keyboard: [
       [
         {
           text: "⚔️ Открыть дуэль",
-          url: getTelegramMiniAppStartUrl(startPayload),
+          web_app: { url: appUrl.toString() },
         },
       ],
     ],
