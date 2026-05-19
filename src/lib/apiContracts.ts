@@ -97,6 +97,12 @@ export type BattleStateResponse = {
   opponent: BattlePlayerState;
   serverTime: string;
   winnerId?: string;
+  rematch?: {
+    requestedByYou: boolean;
+    requestedByOpponent: boolean;
+    nextBattleId: string | null;
+    cancelledByOpponent: boolean;
+  };
 };
 
 export type SubmitBattleWordResponse = {
@@ -112,6 +118,13 @@ export type SubmitBattleWordResponse = {
 
 export type BattleTypingProgressResponse = {
   accepted: boolean;
+  state?: BattleStateResponse;
+};
+
+export type BattleRematchResponse = {
+  accepted: boolean;
+  status: "waiting" | "matched" | "cancelled" | "not_finished";
+  battleId?: string | null;
   state?: BattleStateResponse;
 };
 

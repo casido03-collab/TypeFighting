@@ -18,6 +18,7 @@ type BattlePageProps = {
   maxHp?: number;
   battleId?: string | null;
   onMenu: () => void;
+  onServerBattleStart?: (mode: "online" | "friend", battleId: string) => void;
   onBattleComplete?: (result: StoredBattleResult) => void;
 };
 
@@ -43,6 +44,7 @@ export default function BattlePage({
   maxHp = MAX_HP,
   battleId,
   onMenu,
+  onServerBattleStart,
   onBattleComplete,
 }: BattlePageProps) {
   const [playerHp, setPlayerHp] = useState(maxHp);
@@ -57,6 +59,7 @@ export default function BattlePage({
   const [serverError, setServerError] = useState("");
   const [serverWordsCompleted, setServerWordsCompleted] = useState(0);
   const [isTypingFocused, setIsTypingFocused] = useState(true);
+  const [rematchStatus, setRematchStatus] = useState<"" | "waiting">("");
 
   const resetTimer = useRef<number | null>(null);
   const aiTimer = useRef<number | null>(null);
@@ -104,6 +107,22 @@ export default function BattlePage({
     isServerBattleRef.current = isServerBattle;
     gameOverRef.current = gameOver;
   }, [battleId, gameOver, isServerBattle]);
+
+  useEffect(() => {
+    setRematchStatus("");
+    serverBattleRef.current = null;
+    setServerBattle(null);
+    setServerWordsCompleted(0);
+    setPlayerHp(maxHp);
+    setEnemyHp(maxHp);
+    setCombo(0);
+    setTyped("");
+    setAction("idle");
+    battleStartedAt.current = Date.now();
+    resultReported.current = false;
+    leaveReported.current = false;
+    leavingBattleRef.current = false;
+  }, [battleId]);
 
   useEffect(() => {
     if (!isServerBattle || !serverBattle) return;
@@ -238,6 +257,17 @@ export default function BattlePage({
         const previousState = serverBattleRef.current;
         serverBattleRef.current = state;
 
+        if (state.rematch?.nextBattleId) {
+          onServerBattleStart?.(mode === "online" ? "online" : "friend", state.rematch.nextBattleId);
+          return;
+        }
+
+        if (state.rematch?.cancelledByOpponent) {
+          releaseBattleViewport();
+          onMenu();
+          return;
+        }
+
         if (
           previousState &&
           previousState.status === "active" &&
@@ -258,10 +288,6 @@ export default function BattlePage({
         setPlayerHp(state.player.hp);
         setEnemyHp(state.opponent.hp);
 
-        if ((state.status === "finished" || state.status === "cancelled") && pollTimer) {
-          window.clearInterval(pollTimer);
-          pollTimer = null;
-        }
       } catch {
         if (!cancelled) {
           setServerError("Сервер боя временно недоступен");
@@ -310,6 +336,14 @@ export default function BattlePage({
     void api.leaveBattle(currentBattleId).catch(() => null);
   }
 
+  function reportServerBattleExit() {
+    const currentBattleId = battleIdRef.current;
+    if (!isServerBattleRef.current || !currentBattleId || leaveReported.current) return;
+
+    leaveReported.current = true;
+    void api.leaveBattle(currentBattleId).catch(() => null);
+  }
+
   function releaseBattleViewport() {
     typingInputRef.current?.blur();
     document.documentElement.classList.remove("tk-battle-active");
@@ -320,7 +354,7 @@ export default function BattlePage({
     if (leavingBattleRef.current) return;
 
     leavingBattleRef.current = true;
-    reportBattleLeave();
+    reportServerBattleExit();
     setIsTypingFocused(false);
     releaseBattleViewport();
 
@@ -667,6 +701,32 @@ export default function BattlePage({
     }
   }
 
+  async function requestRematch() {
+    if (!isServerBattle || !battleId || rematchStatus === "waiting") return;
+
+    try {
+      const result = await api.requestBattleRematch(battleId);
+      if (result?.state) {
+        setServerBattle(result.state);
+        serverBattleRef.current = result.state;
+      }
+
+      if (result?.status === "matched" && result.battleId) {
+        onServerBattleStart?.(mode === "online" ? "online" : "friend", result.battleId);
+        return;
+      }
+
+      if (result?.status === "cancelled") {
+        handleMenu();
+        return;
+      }
+
+      setRematchStatus("waiting");
+    } catch {
+      setServerError("Не удалось запросить новый раунд.");
+    }
+  }
+
   return (
     <div
       className={`tk-battle-layout${isTypingFocused ? " tk-battle-keyboard-open" : ""}`}
@@ -690,8 +750,11 @@ export default function BattlePage({
         resultText={resultText}
         serverError={serverError}
         onRestart={restartBattle}
+        onRematch={requestRematch}
         onMenu={handleMenu}
         canRestart={!isServerBattle}
+        canRematch={isServerBattle}
+        rematchWaiting={rematchStatus === "waiting" || Boolean(serverBattle?.rematch?.requestedByYou)}
       />
 
       <TypingDock
@@ -773,8 +836,11 @@ function BattleArena({
   resultText,
   serverError,
   onRestart,
+  onRematch,
   onMenu,
   canRestart,
+  canRematch,
+  rematchWaiting,
 }: {
   playerHp: number;
   enemyHp: number;
@@ -791,8 +857,11 @@ function BattleArena({
   resultText: string;
   serverError?: string;
   onRestart: () => void;
+  onRematch: () => void;
   onMenu: () => void;
   canRestart: boolean;
+  canRematch: boolean;
+  rematchWaiting: boolean;
 }) {
   const playerAction =
     action === "playerAttack" ? styles.stickmanPlayerAttack : action === "playerFall" ? styles.stickmanPlayerFall : {};
@@ -826,9 +895,19 @@ function BattleArena({
           <div>
             <div style={styles.resultTitle}>{resultText}</div>
             <div style={styles.resultText}>Комбо: x{combo}</div>
-            <button style={styles.resultButton} type="button" onClick={canRestart ? onRestart : onMenu}>
-              {canRestart ? "Играть еще" : "В меню"}
+            <button
+              style={styles.resultButton}
+              type="button"
+              onClick={canRestart ? onRestart : canRematch ? onRematch : onMenu}
+              disabled={rematchWaiting}
+            >
+              {canRestart ? "Играть еще" : rematchWaiting ? "Ждем соперника..." : canRematch ? "Играть еще" : "В меню"}
             </button>
+            {canRematch && (
+              <button style={{ ...styles.resultButton, marginTop: 12, background: "#e8f3ff" }} type="button" onClick={onMenu}>
+                В меню
+              </button>
+            )}
           </div>
         </div>
       )}

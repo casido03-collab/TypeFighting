@@ -2,6 +2,7 @@ import { appConfig } from "../config/appConfig";
 import type {
   BattleResultPayload,
   BattleResultResponse,
+  BattleRematchResponse,
   BattleStateResponse,
   BattleTypingProgressResponse,
   DuelInviteResponse,
@@ -84,6 +85,18 @@ function assertBattleState(value: unknown): BattleStateResponse {
   }
 
   return value as BattleStateResponse;
+}
+
+function assertBattleRematch(value: unknown): BattleRematchResponse {
+  if (!isRecord(value) || typeof value.accepted !== "boolean" || typeof value.status !== "string") {
+    throw new Error("Invalid battle rematch response");
+  }
+
+  if (value.state) {
+    assertBattleState(value.state);
+  }
+
+  return value as BattleRematchResponse;
 }
 
 function assertPlayer(value: unknown) {
@@ -443,5 +456,17 @@ export const api = {
       method: "POST",
       keepalive: true,
     });
+  },
+
+  async requestBattleRematch(battleId: string): Promise<BattleRematchResponse | null> {
+    if (!canUseApi()) {
+      return null;
+    }
+
+    return assertBattleRematch(
+      await request<unknown>(`/battles/${encodeURIComponent(battleId)}/rematch`, {
+        method: "POST",
+      })
+    );
   },
 };

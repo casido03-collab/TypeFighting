@@ -625,6 +625,7 @@ export default function App() {
             maxHp={MAX_HP}
             battleId={activeBattleId}
             onMenu={returnToMenu}
+            onServerBattleStart={(mode, nextBattleId) => startBattle(mode, nextBattleId)}
             onBattleComplete={handleBattleComplete}
           />
         )}

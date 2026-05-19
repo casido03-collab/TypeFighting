@@ -380,6 +380,43 @@ function createFriendBattle(battleId, user, opponent, mode = "friend") {
   return state;
 }
 
+function createRematchBattle(previousState) {
+  const battleId = createBattleId();
+  const word = pickServerWord(0);
+  const participants = {};
+
+  for (const participantId of previousState.participantIds || []) {
+    const participant = previousState.participants?.[participantId] || {};
+    participants[participantId] = {
+      id: participantId,
+      name: participant.name || "PLAYER",
+      hp: previousState.maxHp || 120,
+      word,
+      typedCount: 0,
+    };
+  }
+
+  const state = {
+    battleId,
+    mode: previousState.mode || "friend",
+    status: "active",
+    maxHp: previousState.maxHp || 120,
+    round: 1,
+    roundStartedAt: Date.now(),
+    wordLength: word.length,
+    participantIds: [...(previousState.participantIds || [])],
+    participants,
+    serverTime: new Date().toISOString(),
+    rematchOf: previousState.battleId,
+  };
+
+  activeBattles.set(battleId, state);
+  void saveActiveBattle(state).catch((error) => {
+    console.error("Failed to save rematch battle:", error);
+  });
+  return state;
+}
+
 function clearMatchmakingEntry(playerId) {
   const entry = matchmakingQueue.get(playerId);
   if (!entry) return;
@@ -499,7 +536,16 @@ function requireBattleParticipant(req, res, state, user) {
 
 function finishBattleByForfeit(state, user) {
   const userId = String(user.id);
-  if (!state.participants[userId] || state.status === "finished") return state;
+  if (!state.participants[userId]) return state;
+
+  if (state.status === "finished" || state.status === "cancelled") {
+    state.rematch = {
+      ...(state.rematch || {}),
+      cancelledBy: userId,
+      updatedAt: Date.now(),
+    };
+    return state;
+  }
 
   const opponentId = state.participantIds.find((id) => id !== userId);
   if (!opponentId || !state.participants[opponentId]) {
@@ -517,6 +563,10 @@ function finishBattleByForfeit(state, user) {
 
 function serializeBattleState(state, user) {
   const sides = getBattleSides(state, user);
+  const userId = String(user.id);
+  const opponentId = state.participantIds.find((id) => id !== userId);
+  const rematch = state.rematch || {};
+
   return {
     battleId: state.battleId,
     status: state.status,
@@ -527,6 +577,12 @@ function serializeBattleState(state, user) {
     opponent: sides.opponent,
     serverTime: new Date().toISOString(),
     winnerId: state.winnerId,
+    rematch: {
+      requestedByYou: Boolean(rematch.requests?.[userId]),
+      requestedByOpponent: Boolean(opponentId && rematch.requests?.[opponentId]),
+      nextBattleId: rematch.nextBattleId || null,
+      cancelledByOpponent: Boolean(opponentId && rematch.cancelledBy === opponentId),
+    },
   };
 }
 
@@ -1413,6 +1469,65 @@ const server = http.createServer(async (req, res) => {
       }
 
       sendJson(res, 200, { accepted: true });
+      return;
+    }
+
+    if (req.method === "POST" && /^\/api\/battles\/[^/]+\/rematch$/.test(pathname)) {
+      const user = getTelegramUser(req, res);
+      if (!user) return;
+      if (isRateLimited(req, res, "battle_rematch", { limit: 20, windowMs: 60 * 1000 }, user)) return;
+
+      const battleId = decodeURIComponent(pathname.split("/")[3] || "");
+      const state = await getBattleState(battleId);
+      if (!state) {
+        sendJson(res, 404, { error: "battle_not_found" });
+        return;
+      }
+      if (!requireBattleParticipant(req, res, state, user)) return;
+
+      if (state.status !== "finished" && state.status !== "cancelled") {
+        sendJson(res, 200, {
+          accepted: false,
+          status: "not_finished",
+          state: serializeBattleState(state, user),
+        });
+        return;
+      }
+
+      const userId = String(user.id);
+      const opponentId = state.participantIds.find((id) => id !== userId);
+      state.rematch = {
+        requests: {
+          ...(state.rematch?.requests || {}),
+          [userId]: true,
+        },
+        nextBattleId: state.rematch?.nextBattleId || null,
+        cancelledBy: state.rematch?.cancelledBy || null,
+        updatedAt: Date.now(),
+      };
+
+      if (state.rematch.cancelledBy) {
+        await persistBattleState(state);
+        sendJson(res, 200, {
+          accepted: false,
+          status: "cancelled",
+          state: serializeBattleState(state, user),
+        });
+        return;
+      }
+
+      if (!state.rematch.nextBattleId && opponentId && state.rematch.requests[opponentId]) {
+        const nextBattle = createRematchBattle(state);
+        state.rematch.nextBattleId = nextBattle.battleId;
+      }
+
+      await persistBattleState(state);
+      sendJson(res, 200, {
+        accepted: true,
+        status: state.rematch.nextBattleId ? "matched" : "waiting",
+        battleId: state.rematch.nextBattleId || null,
+        state: serializeBattleState(state, user),
+      });
       return;
     }
 
